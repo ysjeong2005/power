@@ -1,0 +1,21 @@
+server:
+  port: ${SERVER_PORT:9096}
+
+spring:
+  application:
+    name: power
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/personal_project?serverTimezone=Asia/Seoul&characterEncoding=UTF-8}
+    username: ${DB_USERNAME:appuser}
+    password: ${DB_PASSWORD:change-me}
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:update}
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:9090,http://127.0.0.1:9090}
