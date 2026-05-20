@@ -1,4 +1,4 @@
-package com.example.power.personnel;
+package com.example.power.budget;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -12,30 +12,27 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 @Entity
-@Table(name = "personnel_people")
-public class PersonnelPerson {
+@Table(name = "budget_items")
+public class BudgetItem {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "category_id", nullable = false)
-    private PersonnelCategory category;
+    private BudgetCategory category;
 
-    @Column(length = 80)
-    private String relation;
-
-    @Column(length = 80)
-    private String name;
+    @Column(length = 160)
+    private String detail;
 
     @Column(nullable = false)
-    private long amount;
+    private long budgetAmount;
 
     @Column(nullable = false)
-    private boolean invitation;
+    private long spentAmount;
 
     @Column(length = 500)
-    private String memo;
+    private String note;
 
     @Column(length = 32)
     private String personalId;
@@ -43,56 +40,51 @@ public class PersonnelPerson {
     @Column(nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
-    protected PersonnelPerson() {
+    protected BudgetItem() {
     }
 
-    public PersonnelPerson(PersonnelCategory category, String personalId) {
+    public BudgetItem(BudgetCategory category, String personalId) {
         this.category = category;
         this.personalId = personalId;
     }
 
-    public void update(PersonnelCategory category, String relation, String name, long amount, boolean invitation, String memo) {
+    public void update(BudgetCategory category, String detail, long budgetAmount, long spentAmount, String note) {
         this.category = category;
-        this.relation = relation;
-        this.name = name;
-        this.amount = amount;
-        this.invitation = invitation;
-        this.memo = memo;
+        this.detail = detail;
+        this.budgetAmount = budgetAmount;
+        this.spentAmount = spentAmount;
+        this.note = note;
     }
 
     public Long getId() {
         return id;
     }
 
-    public PersonnelCategory getCategory() {
+    public BudgetCategory getCategory() {
         return category;
     }
 
-    public String getRelation() {
-        return relation;
+    public String getDetail() {
+        return detail;
     }
 
-    public String getName() {
-        return name;
+    public long getBudgetAmount() {
+        return budgetAmount;
     }
 
-    public long getAmount() {
-        return amount;
+    public long getSpentAmount() {
+        return spentAmount;
     }
 
-    public boolean isInvitation() {
-        return invitation;
+    public long getRemainingAmount() {
+        return budgetAmount - spentAmount;
     }
 
-    public String getMemo() {
-        return memo;
+    public String getNote() {
+        return note;
     }
 
     public String getPersonalId() {
         return personalId;
-    }
-
-    public Instant getCreatedAt() {
-        return createdAt;
     }
 }

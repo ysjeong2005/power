@@ -33,7 +33,8 @@ public final class PersonnelDtos {
             String relation,
             String name,
             Long amount,
-            Boolean invitation
+            Boolean invitation,
+            String memo
     ) {
     }
 
@@ -43,7 +44,8 @@ public final class PersonnelDtos {
             String relation,
             String name,
             long amount,
-            boolean invitation
+            boolean invitation,
+            String memo
     ) {
         static PersonResponse from(PersonnelPerson person) {
             return new PersonResponse(
@@ -52,7 +54,8 @@ public final class PersonnelDtos {
                     person.getRelation(),
                     person.getName(),
                     person.getAmount(),
-                    person.isInvitation()
+                    person.isInvitation(),
+                    person.getMemo()
             );
         }
     }

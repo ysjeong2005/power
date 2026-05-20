@@ -24,16 +24,20 @@ public class PersonnelCategory {
     @Column(nullable = false)
     private int percent;
 
+    @Column(length = 32)
+    private String personalId;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
     protected PersonnelCategory() {
     }
 
-    public PersonnelCategory(String major, String minor, int percent) {
+    public PersonnelCategory(String major, String minor, int percent, String personalId) {
         this.major = major;
         this.minor = minor;
         this.percent = percent;
+        this.personalId = personalId;
     }
 
     public void update(String major, String minor, int percent) {
@@ -56,6 +60,10 @@ public class PersonnelCategory {
 
     public int getPercent() {
         return percent;
+    }
+
+    public String getPersonalId() {
+        return personalId;
     }
 
     public Instant getCreatedAt() {
