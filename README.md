@@ -1,19 +1,19 @@
 # Power
 
-React + Spring Boot + MySQL 기반 개인 프로젝트 배포용 기본 구조입니다.
+React + Spring Boot + MySQL 기반 개인 프로젝트 배포용 구조입니다.
 
 ## 구조
 
 ```text
-backend/   Spring Boot API, JPA, MySQL
-frontend/  Vite React app
-deploy/    EC2 배포 참고 설정
-compose.yml Docker Compose 로컬 실행
+backend/          Spring Boot API, JPA, MySQL
+frontend/         Vite React app
+compose.yml       Docker Compose 로컬 실행
+compose.prod.yml  Docker Compose EC2 배포 실행
 ```
 
-## Docker Compose
+## Docker Compose - 로컬
 
-프로젝트 루트에서 아래 명령으로 프론트, 백엔드, MySQL을 함께 실행합니다.
+로컬에서는 DBeaver 접속과 개발 확인을 위해 MySQL, Backend, Frontend 포트를 모두 호스트에 공개합니다.
 
 ```bash
 docker compose up
@@ -54,6 +54,59 @@ database  personal_project
 username  appuser
 password  apppassword
 root      rootpassword
+```
+
+## Docker Compose - EC2 배포
+
+EC2에서는 `compose.prod.yml`을 사용합니다.
+
+```bash
+docker compose -f compose.prod.yml up -d --build
+```
+
+배포용 compose는 외부 공개를 최소화합니다.
+
+```text
+Frontend  EC2_PUBLIC_IP:9090 공개
+MySQL     EC2_PUBLIC_IP:3308 공개
+Backend   외부 미공개, Docker 내부에서만 접근
+```
+
+DBeaver로 EC2 MySQL에 접속하려면 AWS 보안그룹에서 `3308`을 열어야 합니다. 단, `0.0.0.0/0`이 아니라 접속할 PC의 공인 IP만 허용하세요.
+
+```text
+Type        Port  Source
+SSH         22    내 IP
+Custom TCP  9090  내 IP + 함께 사용할 사람 IP
+Custom TCP  3308  내 IP
+```
+
+EC2에서 환경값을 바꾸고 싶으면 `.env`를 만들어 사용합니다.
+
+```bash
+MYSQL_DATABASE=personal_project
+MYSQL_USER=appuser
+MYSQL_PASSWORD=강한비밀번호
+MYSQL_ROOT_PASSWORD=강한루트비밀번호
+MYSQL_PUBLIC_PORT=3308
+FRONTEND_PUBLIC_PORT=9090
+CORS_ALLOWED_ORIGINS=http://EC2_PUBLIC_IP:9090
+```
+
+DBeaver 접속 정보:
+
+```text
+host      EC2_PUBLIC_IP
+port      3308
+database  personal_project
+username  appuser
+password  .env의 MYSQL_PASSWORD
+```
+
+DB 데이터는 Docker volume `mysql-data`에 저장됩니다. 운영 데이터가 들어간 뒤에는 아래 명령은 사용하지 마세요.
+
+```bash
+docker compose -f compose.prod.yml down -v
 ```
 
 ## Backend
@@ -110,26 +163,10 @@ EC2에서 Nginx가 같은 도메인의 `/api`를 백엔드로 프록시하므로
 
 ## EC2 배포 메모
 
-EC2에는 `git`, `nginx`, `mysql-server`, `java-17-amazon-corretto-devel`, `nodejs`가 필요합니다.
-
-백엔드:
+EC2에는 `git`, `docker`, `docker compose plugin`만 있으면 됩니다.
 
 ```bash
-cd ~/apps/power/backend
-./gradlew clean bootJar -x test
-mkdir -p ~/apps/backend
-cp build/libs/power-backend.jar ~/apps/backend/app.jar
-sudo systemctl restart spring-app
-```
-
-프론트:
-
-```bash
-cd ~/apps/power/frontend
-npm install
-npm run build
-sudo mkdir -p /var/www/myapp
-sudo rm -rf /var/www/myapp/*
-sudo cp -r dist/* /var/www/myapp/
-sudo systemctl restart nginx
+git clone https://github.com/ysjeong2005/power.git
+cd power
+docker compose -f compose.prod.yml up -d --build
 ```
