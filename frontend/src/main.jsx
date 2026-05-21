@@ -1,10 +1,28 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { CircleCheck, GripVertical, LogOut, PanelLeftClose, PanelLeftOpen, PieChart, Plus, ReceiptText, RefreshCw, Settings, Wallet, X } from 'lucide-react';
+import { CircleCheck, GripVertical, HelpCircle, LogOut, PanelLeftClose, PanelLeftOpen, PieChart, Plus, ReceiptText, RefreshCw, Settings, Wallet, X } from 'lucide-react';
 import './styles.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const BUDGET_SIMPLE_VIEW_KEY = 'power.budget.simpleView';
+const DEFAULT_SETTINGS = { darkMode: false, defaultPage: 'checklist' };
+const START_PAGE_OPTIONS = [
+  { value: 'checklist', label: '체크리스트' },
+  { value: 'personnel', label: '인원관리' },
+  { value: 'budget', label: '예산관리' },
+  { value: 'weddingHall', label: '웨딩홀' },
+  { value: 'sdm', label: '스드메' },
+  { value: 'home', label: '보금자리' },
+  { value: 'settings', label: '설정' }
+];
+
+function normalizeSettings(settings) {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...(settings ?? {}),
+    defaultPage: START_PAGE_OPTIONS.some((option) => option.value === settings?.defaultPage) ? settings.defaultPage : DEFAULT_SETTINGS.defaultPage
+  };
+}
 
 function currency(value) {
   return `${Number(value || 0).toLocaleString('ko-KR')}원`;
@@ -46,7 +64,16 @@ function Sidebar({ activePage, onNavigate, user, onLogout, collapsed, onToggleCo
           <button className={activePage === 'budget' ? 'active' : ''} type="button" onClick={() => onNavigate('budget')} title="예산관리">
             <span>예산관리</span>
           </button>
-          <button type="button" title="설정">
+          <button className={activePage === 'weddingHall' ? 'active' : ''} type="button" onClick={() => onNavigate('weddingHall')} title="웨딩홀">
+            <span>웨딩홀</span>
+          </button>
+          <button className={activePage === 'sdm' ? 'active' : ''} type="button" onClick={() => onNavigate('sdm')} title="스드메">
+            <span>스드메</span>
+          </button>
+          <button className={activePage === 'home' ? 'active' : ''} type="button" onClick={() => onNavigate('home')} title="보금자리">
+            <span>보금자리</span>
+          </button>
+          <button className={activePage === 'settings' ? 'active' : ''} type="button" onClick={() => onNavigate('settings')} title="설정">
             <span>설정</span>
           </button>
         </nav>
@@ -865,6 +892,8 @@ function ChecklistPage() {
   const [categoryMessage, setCategoryMessage] = useState('');
   const [categoryNotice, setCategoryNotice] = useState('');
   const [draggedId, setDraggedId] = useState(null);
+  const [dragOverItemId, setDragOverItemId] = useState(null);
+  const [dragOverCategoryId, setDragOverCategoryId] = useState(null);
   const [editingCell, setEditingCell] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -1010,15 +1039,30 @@ function ChecklistPage() {
   }
 
   function dropItemOnCategory(categoryId) {
-    if (!draggedId) return;
+    if (!draggedId) {
+      setDragOverCategoryId(null);
+      return;
+    }
     reorderItems(items.map((item) => item.id === draggedId ? { ...item, categoryId } : item));
     setDraggedId(null);
+    setDragOverItemId(null);
+    setDragOverCategoryId(null);
   }
 
   function dropItemOnItem(targetItem) {
-    if (!draggedId || draggedId === targetItem.id) return;
+    if (!draggedId || draggedId === targetItem.id) {
+      setDraggedId(null);
+      setDragOverItemId(null);
+      setDragOverCategoryId(null);
+      return;
+    }
     const dragged = items.find((item) => item.id === draggedId);
-    if (!dragged) return;
+    if (!dragged) {
+      setDraggedId(null);
+      setDragOverItemId(null);
+      setDragOverCategoryId(null);
+      return;
+    }
     const withoutDragged = items.filter((item) => item.id !== draggedId);
     const nextDragged = { ...dragged, categoryId: targetItem.categoryId };
     const targetIndex = withoutDragged.findIndex((item) => item.id === targetItem.id);
@@ -1026,6 +1070,8 @@ function ChecklistPage() {
     nextItems.splice(targetIndex < 0 ? nextItems.length : targetIndex, 0, nextDragged);
     reorderItems(nextItems);
     setDraggedId(null);
+    setDragOverItemId(null);
+    setDragOverCategoryId(null);
   }
 
   async function saveItems() {
@@ -1230,23 +1276,42 @@ function ChecklistPage() {
                 return (
                   <React.Fragment key={category.id}>
                     <tr
-                      className="checklist-category-row"
+                      className={`checklist-category-row ${draggedId && dragOverCategoryId === category.id ? 'drag-over-row' : ''}`}
                       onClick={() => addItem(category.id)}
-                      onDragOver={(event) => event.preventDefault()}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        setDragOverCategoryId(category.id);
+                        setDragOverItemId(null);
+                      }}
+                      onDragLeave={() => setDragOverCategoryId((current) => current === category.id ? null : current)}
                       onDrop={() => dropItemOnCategory(category.id)}
                     >
-                      <td colSpan="8" style={{ background: category.color }}>
+                      <td colSpan="8" style={{ '--category-color': category.color }}>
                         <strong>{category.name}</strong>
                         <span>{categoryItems.length === 0 ? '분류 로우 클릭 시 체크리스트 추가' : `${categoryItems.length}개 항목`}</span>
                       </td>
                     </tr>
                     {categoryItems.map((item) => (
                       <tr
-                        className="checklist-item-row"
+                        className={`checklist-item-row ${draggedId && dragOverItemId === item.id && draggedId !== item.id ? 'drag-over-row' : ''}`}
                         key={item.id}
                         draggable
-                        onDragStart={() => setDraggedId(item.id)}
-                        onDragOver={(event) => event.preventDefault()}
+                        onDragStart={() => {
+                          setDraggedId(item.id);
+                          setDragOverItemId(null);
+                          setDragOverCategoryId(null);
+                        }}
+                        onDragEnd={() => {
+                          setDraggedId(null);
+                          setDragOverItemId(null);
+                          setDragOverCategoryId(null);
+                        }}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          setDragOverItemId(item.id);
+                          setDragOverCategoryId(null);
+                        }}
+                        onDragLeave={() => setDragOverItemId((current) => current === item.id ? null : current)}
                         onDrop={() => dropItemOnItem(item)}
                       >
                         <td className="drag-column" aria-label="로우선택"><GripVertical size={16} /></td>
@@ -1857,10 +1922,11 @@ function BudgetPage() {
 
       <section className="budget-card-grid">
         <button className="budget-stat-card clickable" type="button" onClick={() => setIsAssetModalOpen(true)}>
+          <Settings className="card-settings-icon" size={16} />
           <Wallet size={30} />
           <span>나의 예산</span>
           <strong>{currency(assetTotals.available)} / {currency(assetTotals.total)}</strong>
-          <em>가용금액 / 전체금액</em>
+          <em>{assetTotals.total === 0 ? '클릭해서 금액을 추가하세요' : '가용금액 / 전체금액'}</em>
         </button>
         <div className="budget-stat-card spent">
           <ReceiptText size={30} />
@@ -2203,11 +2269,827 @@ function BudgetPage() {
   );
 }
 
+const weddingHallEmpty = {
+  venueName: '',
+  region: '',
+  address: '',
+  nearestStation: '',
+  shuttle: false,
+  standalone: false,
+  hallName: '',
+  mood: '어두움',
+  rentalFee: 0,
+  directingFee: 0,
+  minPeople: 0,
+  maxPeople: 0,
+  mealFee: 0,
+  mealType: '',
+  weddingStyle: '분리',
+  ceremonyTime: '',
+  flowerFee: 0,
+  parking: '',
+  parkingFee: '',
+  minAmount: 0,
+  maxAmount: 0,
+  note: '',
+  sortOrder: 0
+};
+
+function WeddingHallPage() {
+  const [rows, setRows] = useState([]);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [dirtyIds, setDirtyIds] = useState([]);
+  const [editingCell, setEditingCell] = useState(null);
+  const [draggedId, setDraggedId] = useState(null);
+  const [dragOverId, setDragOverId] = useState(null);
+  const [filters, setFilters] = useState({ venueName: '', region: '', mood: '' });
+  const [isSimpleView, setIsSimpleView] = useState(true);
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [message, setMessage] = useState('');
+  const [notice, setNotice] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  const visibleRows = useMemo(() => rows.filter((row) => (
+    (!filters.venueName || (row.venueName ?? '').includes(filters.venueName))
+    && (!filters.region || (row.region ?? '').includes(filters.region))
+    && (!filters.mood || row.mood === filters.mood)
+  )).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)), [filters, rows]);
+  const visibleIds = visibleRows.map((row) => row.id);
+  const isAllSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+  const newCount = rows.filter((row) => row.isNew).length;
+  const editCount = dirtyIds.length;
+  const hasPendingChanges = newCount > 0 || editCount > 0;
+  const pendingText = [
+    newCount > 0 ? `신규 ${newCount}건` : '',
+    editCount > 0 ? `수정 ${editCount}건` : ''
+  ].filter(Boolean).join(', ') || '저장 전 변경 없음';
+
+  async function api(path, options = {}) {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) },
+      ...options
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      let errorMessage = '요청 처리에 실패했습니다.';
+      if (text) {
+        try {
+          errorMessage = JSON.parse(text).message ?? errorMessage;
+        } catch {
+          errorMessage = text;
+        }
+      }
+      throw new Error(errorMessage);
+    }
+    if (response.status === 204) return null;
+    return text ? JSON.parse(text) : null;
+  }
+
+  async function loadRows() {
+    setIsLoading(true);
+    setMessage('');
+    try {
+      const data = await api('/api/wedding-halls');
+      setRows(data.items ?? []);
+      setDirtyIds([]);
+      setSelectedIds([]);
+      setEditingCell(null);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function updateRow(rowId, field, value) {
+    const tableWrap = document.querySelector('.wedding-hall-table')?.closest('.vendor-table-wrap');
+    const scrollLeft = tableWrap?.scrollLeft ?? 0;
+    setRows((current) => current.map((row) => row.id === rowId ? { ...row, [field]: value } : row));
+    if (typeof rowId === 'number') {
+      setDirtyIds((current) => current.includes(rowId) ? current : [...current, rowId]);
+    }
+    window.requestAnimationFrame(() => {
+      const nextTableWrap = document.querySelector('.wedding-hall-table')?.closest('.vendor-table-wrap');
+      if (nextTableWrap) {
+        nextTableWrap.scrollLeft = scrollLeft;
+      }
+    });
+  }
+
+  function addRow() {
+    setRows((current) => [{ ...weddingHallEmpty, id: `new-${Date.now()}`, sortOrder: current.length, isNew: true }, ...current]);
+    setNotice('');
+  }
+
+  function startEditing(rowId, field) {
+    setEditingCell({ rowId, field });
+  }
+
+  function finishEditing() {
+    setEditingCell(null);
+  }
+
+  function isEditing(rowId, field) {
+    return editingCell?.rowId === rowId && editingCell?.field === field;
+  }
+
+  function normalizeSort(nextRows) {
+    const normalized = nextRows.map((row, index) => ({ ...row, sortOrder: index }));
+    setRows(normalized);
+    setDirtyIds((current) => {
+      const dirty = new Set(current);
+      normalized.forEach((row) => {
+        if (typeof row.id === 'number') dirty.add(row.id);
+      });
+      return Array.from(dirty);
+    });
+  }
+
+  function dropRow(targetRow) {
+    if (!draggedId || draggedId === targetRow.id) {
+      setDraggedId(null);
+      setDragOverId(null);
+      return;
+    }
+    const dragged = rows.find((row) => row.id === draggedId);
+    if (!dragged) {
+      setDraggedId(null);
+      setDragOverId(null);
+      return;
+    }
+    const withoutDragged = rows.filter((row) => row.id !== draggedId);
+    const targetIndex = withoutDragged.findIndex((row) => row.id === targetRow.id);
+    const nextRows = [...withoutDragged];
+    nextRows.splice(targetIndex < 0 ? nextRows.length : targetIndex, 0, dragged);
+    normalizeSort(nextRows);
+    setDraggedId(null);
+    setDragOverId(null);
+  }
+
+  function serialize(row) {
+    const numberFields = [
+      'rentalFee',
+      'directingFee',
+      'minPeople',
+      'maxPeople',
+      'mealFee',
+      'flowerFee',
+      'minAmount',
+      'maxAmount'
+    ];
+    const next = { ...row, sortOrder: Number(row.sortOrder || 0) };
+    numberFields.forEach((field) => {
+      next[field] = Number(next[field] || 0);
+    });
+    return next;
+  }
+
+  async function saveRows() {
+    const newRows = rows.filter((row) => row.isNew);
+    const dirtyRows = rows.filter((row) => !row.isNew && dirtyIds.includes(row.id));
+    if (newRows.length === 0 && dirtyRows.length === 0) {
+      setNotice('저장할 변경사항이 없습니다.');
+      return;
+    }
+    setMessage('');
+    setNotice('');
+    try {
+      const created = await Promise.all(newRows.map((row) => api('/api/wedding-halls', {
+        method: 'POST',
+        body: JSON.stringify(serialize(row))
+      })));
+      const updated = await Promise.all(dirtyRows.map((row) => api(`/api/wedding-halls/${row.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(serialize(row))
+      })));
+      setRows((current) => {
+        const createdQueue = [...created];
+        return current.map((row) => {
+          const saved = updated.find((item) => item.id === row.id);
+          if (saved) return saved;
+          if (!row.isNew) return row;
+          return createdQueue.shift();
+        });
+      });
+      setDirtyIds([]);
+      setSelectedIds([]);
+      setEditingCell(null);
+      setNotice(`${created.length + updated.length}개 웨딩홀 정보를 저장했습니다.`);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  async function deleteSelected() {
+    if (selectedIds.length === 0) {
+      setNotice('삭제할 웨딩홀을 선택하세요.');
+      return;
+    }
+    const persistedIds = selectedIds.filter((id) => typeof id === 'number');
+    setMessage('');
+    setNotice('');
+    try {
+      if (persistedIds.length > 0) {
+        await api('/api/wedding-halls', { method: 'DELETE', body: JSON.stringify(persistedIds) });
+      }
+      setRows((current) => current.filter((row) => !selectedIds.includes(row.id)));
+      setDirtyIds((current) => current.filter((id) => !selectedIds.includes(id)));
+      setSelectedIds([]);
+      setNotice(`${selectedIds.length}개 웨딩홀 정보를 삭제했습니다.`);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  function renderEditableCell(row, field, type = 'text', placeholder = '', options) {
+    const editable = row.isNew || isEditing(row.id, field);
+    if (!editable) {
+      return <span className="read-text" onDoubleClick={() => startEditing(row.id, field)}>{type === 'money' ? currency(row[field]) : (row[field] || '-')}</span>;
+    }
+    if (options) {
+      return (
+        <select value={row[field] ?? ''} onBlur={finishEditing} onChange={(event) => updateRow(row.id, field, event.target.value)}>
+          {options.map((option) => <option key={option} value={option}>{option}</option>)}
+        </select>
+      );
+    }
+    return (
+      <input
+        autoFocus={!row.isNew}
+        type={type === 'money' || type === 'number' ? 'number' : 'text'}
+        value={row[field] ?? ''}
+        placeholder={placeholder}
+        onBlur={finishEditing}
+        onChange={(event) => updateRow(row.id, field, type === 'money' || type === 'number' ? event.target.value : event.target.value)}
+      />
+    );
+  }
+
+  useEffect(() => {
+    loadRows();
+  }, []);
+
+  return (
+    <main className="app-shell wide-shell">
+      <section className="hero compact-hero">
+        <div>
+          <p className="eyebrow">Power 프로젝트</p>
+          <div className="title-row">
+            <h1>웨딩홀</h1>
+            <PrettyCheckbox checked={isSimpleView} onChange={setIsSimpleView} label="간단하게 보기" />
+          </div>
+          <p className="summary">웨딩홀 후보의 비용, 위치, 조건을 비교합니다.</p>
+        </div>
+        <button className="icon-button" type="button" onClick={loadRows} disabled={isLoading} aria-label="새로고침">
+          <RefreshCw size={18} />
+        </button>
+      </section>
+      <button className="filter-toggle" type="button" onClick={() => setIsFilterOpen((current) => !current)}>{isFilterOpen ? '필터 접기' : '필터 펼치기'}</button>
+      <section className={`filter-strip ${isFilterOpen ? 'open' : 'collapsed'}`}>
+        <label><span>예식장</span><input value={filters.venueName} onChange={(event) => setFilters((current) => ({ ...current, venueName: event.target.value }))} /></label>
+        <label><span>지역</span><input value={filters.region} onChange={(event) => setFilters((current) => ({ ...current, region: event.target.value }))} /></label>
+        <label><span>홀분위기</span><select value={filters.mood} onChange={(event) => setFilters((current) => ({ ...current, mood: event.target.value }))}><option value="">전체</option><option value="어두움">어두움</option><option value="밝음">밝음</option></select></label>
+        <button className="filter-search" type="button" onClick={loadRows}>조회</button>
+      </section>
+      {message && <p className="message">{message}</p>}
+      {notice && <p className="saved-notice">{notice}</p>}
+      <section className="table-panel">
+        <div className="table-toolbar">
+          <span className={`pending-inline ${hasPendingChanges ? 'active' : ''}`}>{pendingText}</span>
+          <div className="table-toolbar-actions">
+            <button className="small-action" type="button" onClick={addRow}><Plus size={14} /> 행 추가</button>
+            <button className="small-delete" type="button" onClick={deleteSelected}>삭제</button>
+            <button className={`small-save ${hasPendingChanges ? 'has-pending' : ''}`} type="button" onClick={saveRows}>저장</button>
+          </div>
+        </div>
+        <div className="grid-table-wrap vendor-table-wrap">
+          <table className={`vendor-table wedding-hall-table ${isSimpleView ? 'simple-view' : 'full-view'}`}>
+            <thead>
+              <tr>
+                <th>로우선택</th><th><PrettyCheckbox checked={isAllSelected} onChange={(checked) => setSelectedIds(checked ? visibleIds : [])} tone="danger" /></th>
+                <th>예식장</th><th>지역</th>{!isSimpleView && <><th>상세주소</th><th>가까운역</th><th>셔틀</th><th>단독건물</th><th>웨딩홀</th></>}<th>홀분위기</th><th>대관료</th><th>연출료</th><th>최소인원</th>{!isSimpleView && <th>최대인원</th>}<th>식대</th>{!isSimpleView && <><th>식사종류</th><th>웨딩형식</th><th>시간</th><th>꽃금액</th><th>주차</th><th>주차비/시간</th></>}<th>최소금액</th>{!isSimpleView && <th>최대금액</th>}<th>비고</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRows.length === 0 && <tr><td className="empty-table" colSpan={isSimpleView ? 11 : 24}><strong>표시할 웨딩홀이 없습니다.</strong><span>행 추가로 후보를 입력하세요.</span></td></tr>}
+              {visibleRows.map((row) => (
+                <tr
+                  key={row.id}
+                  className={`${row.isNew ? 'new-row' : ''} ${draggedId && dragOverId === row.id && draggedId !== row.id ? 'drag-over-row' : ''}`}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setDragOverId(row.id);
+                  }}
+                  onDragLeave={() => setDragOverId((current) => current === row.id ? null : current)}
+                  onDrop={() => dropRow(row)}
+                >
+                  <td
+                    className="drag-column"
+                    draggable
+                    onDragStart={() => {
+                      setDraggedId(row.id);
+                      setDragOverId(null);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedId(null);
+                      setDragOverId(null);
+                    }}
+                  ><GripVertical size={16} /></td>
+                  <td className="check-column"><PrettyCheckbox checked={selectedIds.includes(row.id)} onChange={(checked) => setSelectedIds((current) => checked ? [...current, row.id] : current.filter((id) => id !== row.id))} tone="danger" /></td>
+                  <td>{renderEditableCell(row, 'venueName', 'text', '예식장')}</td>
+                  <td>{renderEditableCell(row, 'region', 'text', '지역')}</td>
+                  {!isSimpleView && <><td>{renderEditableCell(row, 'address')}</td><td>{renderEditableCell(row, 'nearestStation')}</td><td className="check-column"><PrettyCheckbox checked={row.shuttle} onChange={(checked) => updateRow(row.id, 'shuttle', checked)} /></td><td className="check-column"><PrettyCheckbox checked={row.standalone} onChange={(checked) => updateRow(row.id, 'standalone', checked)} /></td><td>{renderEditableCell(row, 'hallName')}</td></>}
+                  <td>{renderEditableCell(row, 'mood', 'text', '', ['어두움', '밝음'])}</td>
+                  <td>{renderEditableCell(row, 'rentalFee', 'money')}</td>
+                  <td>{renderEditableCell(row, 'directingFee', 'money')}</td>
+                  <td>{renderEditableCell(row, 'minPeople', 'number')}</td>
+                  {!isSimpleView && <td>{renderEditableCell(row, 'maxPeople', 'number')}</td>}
+                  <td>{renderEditableCell(row, 'mealFee', 'money')}</td>
+                  {!isSimpleView && <><td>{renderEditableCell(row, 'mealType')}</td><td>{renderEditableCell(row, 'weddingStyle', 'text', '', ['분리', '동시'])}</td><td>{renderEditableCell(row, 'ceremonyTime', 'text', '70분')}</td><td>{renderEditableCell(row, 'flowerFee', 'money')}</td><td>{renderEditableCell(row, 'parking', 'text', '700대')}</td><td>{renderEditableCell(row, 'parkingFee')}</td></>}
+                  <td>{renderEditableCell(row, 'minAmount', 'money')}</td>
+                  {!isSimpleView && <td>{renderEditableCell(row, 'maxAmount', 'money')}</td>}
+                  <td>{row.isNew || isEditing(row.id, 'note') ? <textarea value={row.note ?? ''} onBlur={finishEditing} onChange={(event) => updateRow(row.id, 'note', event.target.value)} placeholder="비고" /> : <span className="read-text memo-text multi-line" onDoubleClick={() => startEditing(row.id, 'note')}>{row.note || '-'}</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function SdmPage() {
+  const [rows, setRows] = useState([]);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [dirtyIds, setDirtyIds] = useState([]);
+  const [draggedId, setDraggedId] = useState(null);
+  const [dragOverId, setDragOverId] = useState(null);
+  const [editingCell, setEditingCell] = useState(null);
+  const [message, setMessage] = useState('');
+  const [notice, setNotice] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const visibleIds = rows.map((row) => row.id);
+  const isAllSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+  const newCount = rows.filter((row) => row.isNew).length;
+  const editCount = dirtyIds.length;
+  const hasPendingChanges = newCount > 0 || editCount > 0;
+  const pendingText = [newCount > 0 ? `신규 ${newCount}건` : '', editCount > 0 ? `수정 ${editCount}건` : ''].filter(Boolean).join(', ') || '저장 전 변경 없음';
+
+  async function api(path, options = {}) {
+    const response = await fetch(`${API_BASE_URL}${path}`, { headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) }, ...options });
+    const text = await response.text();
+    if (!response.ok) throw new Error(text ? JSON.parse(text).message ?? text : '요청 처리에 실패했습니다.');
+    if (response.status === 204) return null;
+    return text ? JSON.parse(text) : null;
+  }
+  async function loadRows() {
+    setIsLoading(true); setMessage('');
+    try { const data = await api('/api/sdm'); setRows(data.items ?? []); setDirtyIds([]); setSelectedIds([]); setEditingCell(null); }
+    catch (error) { setMessage(error.message); } finally { setIsLoading(false); }
+  }
+  function updateRow(rowId, field, value) {
+    setRows((current) => current.map((row) => row.id === rowId ? { ...row, [field]: value } : row));
+    if (typeof rowId === 'number') setDirtyIds((current) => current.includes(rowId) ? current : [...current, rowId]);
+  }
+  function addRow() {
+    setRows((current) => [{ id: `new-${Date.now()}`, companyName: '', location: '', studioAmount: '', dressAmount: '', makeupAmount: '', memo: '', sortOrder: current.length, isNew: true }, ...current]);
+    setNotice('');
+  }
+  function reorder(targetRow) {
+    if (!draggedId || draggedId === targetRow.id) {
+      setDraggedId(null);
+      setDragOverId(null);
+      return;
+    }
+    const dragged = rows.find((row) => row.id === draggedId);
+    if (!dragged) {
+      setDraggedId(null);
+      setDragOverId(null);
+      return;
+    }
+    const rest = rows.filter((row) => row.id !== draggedId);
+    const targetIndex = rest.findIndex((row) => row.id === targetRow.id);
+    const next = [...rest];
+    next.splice(targetIndex < 0 ? next.length : targetIndex, 0, dragged);
+    const normalized = next.map((row, index) => ({ ...row, sortOrder: index }));
+    setRows(normalized);
+    setDirtyIds((current) => Array.from(new Set([...current, ...normalized.filter((row) => typeof row.id === 'number').map((row) => row.id)])));
+    setDraggedId(null);
+    setDragOverId(null);
+  }
+  function serialize(row) {
+    return {
+      ...row,
+      studioAmount: Number(row.studioAmount || 0),
+      dressAmount: Number(row.dressAmount || 0),
+      makeupAmount: Number(row.makeupAmount || 0),
+      sortOrder: Number(row.sortOrder || 0)
+    };
+  }
+  async function saveRows() {
+    const newRows = rows.filter((row) => row.isNew);
+    const dirtyRows = rows.filter((row) => !row.isNew && dirtyIds.includes(row.id));
+    if (newRows.length === 0 && dirtyRows.length === 0) { setNotice('저장할 변경사항이 없습니다.'); return; }
+    setMessage(''); setNotice('');
+    try {
+      const created = await Promise.all(newRows.map((row) => api('/api/sdm', { method: 'POST', body: JSON.stringify(serialize(row)) })));
+      const updated = await Promise.all(dirtyRows.map((row) => api(`/api/sdm/${row.id}`, { method: 'PUT', body: JSON.stringify(serialize(row)) })));
+      setRows((current) => { const queue = [...created]; return current.map((row) => updated.find((item) => item.id === row.id) ?? (!row.isNew ? row : queue.shift())); });
+      setDirtyIds([]); setSelectedIds([]); setEditingCell(null); setNotice(`${created.length + updated.length}개 스드메 정보를 저장했습니다.`);
+    } catch (error) { setMessage(error.message); }
+  }
+  async function deleteSelected() {
+    if (selectedIds.length === 0) { setNotice('삭제할 스드메를 선택하세요.'); return; }
+    const persistedIds = selectedIds.filter((id) => typeof id === 'number');
+    setMessage(''); setNotice('');
+    try {
+      if (persistedIds.length > 0) await api('/api/sdm', { method: 'DELETE', body: JSON.stringify(persistedIds) });
+      setRows((current) => current.filter((row) => !selectedIds.includes(row.id)));
+      setDirtyIds((current) => current.filter((id) => !selectedIds.includes(id)));
+      setSelectedIds([]); setNotice(`${selectedIds.length}개 스드메 정보를 삭제했습니다.`);
+    } catch (error) { setMessage(error.message); }
+  }
+  function cell(row, field, type = 'text') {
+    const editing = row.isNew || (editingCell?.rowId === row.id && editingCell?.field === field);
+    if (!editing) return <span className="read-text" onDoubleClick={() => setEditingCell({ rowId: row.id, field })}>{type === 'money' ? currency(row[field]) : (row[field] || '-')}</span>;
+    return <input autoFocus={!row.isNew} type={type === 'money' ? 'number' : 'text'} value={row[field] ?? ''} onBlur={() => setEditingCell(null)} onChange={(event) => updateRow(row.id, field, event.target.value)} />;
+  }
+  useEffect(() => { loadRows(); }, []);
+  return (
+    <main className="app-shell wide-shell">
+      <section className="hero compact-hero">
+        <div><p className="eyebrow">Power 프로젝트</p><h1>스드메</h1><p className="summary">스튜디오, 드레스, 메이크업 업체 견적을 비교합니다.</p></div>
+        <button className="icon-button" type="button" onClick={loadRows} disabled={isLoading} aria-label="새로고침"><RefreshCw size={18} /></button>
+      </section>
+      {message && <p className="message">{message}</p>}{notice && <p className="saved-notice">{notice}</p>}
+      <section className="table-panel">
+        <div className="table-toolbar"><span className={`pending-inline ${hasPendingChanges ? 'active' : ''}`}>{pendingText}</span><div className="table-toolbar-actions"><button className="small-action" type="button" onClick={addRow}><Plus size={14} /> 행 추가</button><button className="small-delete" type="button" onClick={deleteSelected}>삭제</button><button className={`small-save ${hasPendingChanges ? 'has-pending' : ''}`} type="button" onClick={saveRows}>저장</button></div></div>
+        <div className="grid-table-wrap vendor-table-wrap"><table className="vendor-table sdm-table"><thead><tr><th>로우선택</th><th><PrettyCheckbox checked={isAllSelected} onChange={(checked) => setSelectedIds(checked ? visibleIds : [])} tone="danger" /></th><th>업체명</th><th>위치</th><th>스튜디오</th><th>드레스</th><th>메이크업</th><th>합계금액</th><th>메모</th></tr></thead><tbody>{rows.length === 0 && <tr><td className="empty-table" colSpan="9"><strong>표시할 스드메가 없습니다.</strong><span>행 추가로 업체를 입력하세요.</span></td></tr>}{rows.map((row) => <tr key={row.id} className={`${row.isNew ? 'new-row' : ''} ${draggedId && dragOverId === row.id && draggedId !== row.id ? 'drag-over-row' : ''}`} onDragOver={(event) => { event.preventDefault(); setDragOverId(row.id); }} onDragLeave={() => setDragOverId((current) => current === row.id ? null : current)} onDrop={() => reorder(row)}><td className="drag-column" draggable onDragStart={() => { setDraggedId(row.id); setDragOverId(null); }} onDragEnd={() => { setDraggedId(null); setDragOverId(null); }}><GripVertical size={16} /></td><td className="check-column"><PrettyCheckbox checked={selectedIds.includes(row.id)} onChange={(checked) => setSelectedIds((current) => checked ? [...current, row.id] : current.filter((id) => id !== row.id))} tone="danger" /></td><td>{cell(row, 'companyName')}</td><td>{cell(row, 'location')}</td><td>{cell(row, 'studioAmount', 'money')}</td><td>{cell(row, 'dressAmount', 'money')}</td><td>{cell(row, 'makeupAmount', 'money')}</td><td className="readonly-metric">{currency(Number(row.studioAmount || 0) + Number(row.dressAmount || 0) + Number(row.makeupAmount || 0))}</td><td>{row.isNew || (editingCell?.rowId === row.id && editingCell?.field === 'memo') ? <textarea value={row.memo ?? ''} onBlur={() => setEditingCell(null)} onChange={(event) => updateRow(row.id, 'memo', event.target.value)} /> : <span className="read-text memo-text multi-line" onDoubleClick={() => setEditingCell({ rowId: row.id, field: 'memo' })}>{row.memo || '-'}</span>}</td></tr>)}</tbody></table></div>
+      </section>
+    </main>
+  );
+}
+
+function HomePage() {
+  const [rows, setRows] = useState([]);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [dirtyIds, setDirtyIds] = useState([]);
+  const [draggedId, setDraggedId] = useState(null);
+  const [dragOverId, setDragOverId] = useState(null);
+  const [editingCell, setEditingCell] = useState(null);
+  const [message, setMessage] = useState('');
+  const [notice, setNotice] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const visibleIds = rows.map((row) => row.id);
+  const isAllSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+  const newCount = rows.filter((row) => row.isNew).length;
+  const editCount = dirtyIds.length;
+  const hasPendingChanges = newCount > 0 || editCount > 0;
+  const pendingText = [newCount > 0 ? `신규 ${newCount}건` : '', editCount > 0 ? `수정 ${editCount}건` : ''].filter(Boolean).join(', ') || '저장 전 변경 없음';
+
+  async function api(path, options = {}) {
+    const response = await fetch(`${API_BASE_URL}${path}`, { headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) }, ...options });
+    const text = await response.text();
+    if (!response.ok) throw new Error(text ? JSON.parse(text).message ?? text : '요청 처리에 실패했습니다.');
+    if (response.status === 204) return null;
+    return text ? JSON.parse(text) : null;
+  }
+
+  async function loadRows() {
+    setIsLoading(true);
+    setMessage('');
+    try {
+      const data = await api('/api/homes');
+      setRows(data.items ?? []);
+      setDirtyIds([]);
+      setSelectedIds([]);
+      setEditingCell(null);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function updateRow(rowId, field, value) {
+    setRows((current) => current.map((row) => row.id === rowId ? { ...row, [field]: value } : row));
+    if (typeof rowId === 'number') setDirtyIds((current) => current.includes(rowId) ? current : [...current, rowId]);
+  }
+
+  function addRow() {
+    setRows((current) => [{
+      id: `new-${Date.now()}`,
+      apartmentName: '',
+      location: '',
+      supplyArea: '',
+      pyeong: '',
+      hogangnonoAmount: '',
+      naverAmount: '',
+      parkingStatus: '',
+      sunDirection: '',
+      memo: '',
+      sortOrder: current.length,
+      isNew: true
+    }, ...current]);
+    setNotice('');
+  }
+
+  function reorder(targetRow) {
+    if (!draggedId || draggedId === targetRow.id) {
+      setDraggedId(null);
+      setDragOverId(null);
+      return;
+    }
+    const dragged = rows.find((row) => row.id === draggedId);
+    if (!dragged) {
+      setDraggedId(null);
+      setDragOverId(null);
+      return;
+    }
+    const rest = rows.filter((row) => row.id !== draggedId);
+    const targetIndex = rest.findIndex((row) => row.id === targetRow.id);
+    const next = [...rest];
+    next.splice(targetIndex < 0 ? next.length : targetIndex, 0, dragged);
+    const normalized = next.map((row, index) => ({ ...row, sortOrder: index }));
+    setRows(normalized);
+    setDirtyIds((current) => Array.from(new Set([...current, ...normalized.filter((row) => typeof row.id === 'number').map((row) => row.id)])));
+    setDraggedId(null);
+    setDragOverId(null);
+  }
+
+  function serialize(row) {
+    return {
+      ...row,
+      hogangnonoAmount: Number(row.hogangnonoAmount || 0),
+      naverAmount: Number(row.naverAmount || 0),
+      sortOrder: Number(row.sortOrder || 0)
+    };
+  }
+
+  async function saveRows() {
+    const newRows = rows.filter((row) => row.isNew);
+    const dirtyRows = rows.filter((row) => !row.isNew && dirtyIds.includes(row.id));
+    if (newRows.length === 0 && dirtyRows.length === 0) {
+      setNotice('저장할 변경사항이 없습니다.');
+      return;
+    }
+    setMessage('');
+    setNotice('');
+    try {
+      const created = await Promise.all(newRows.map((row) => api('/api/homes', { method: 'POST', body: JSON.stringify(serialize(row)) })));
+      const updated = await Promise.all(dirtyRows.map((row) => api(`/api/homes/${row.id}`, { method: 'PUT', body: JSON.stringify(serialize(row)) })));
+      setRows((current) => {
+        const queue = [...created];
+        return current.map((row) => updated.find((item) => item.id === row.id) ?? (!row.isNew ? row : queue.shift()));
+      });
+      setDirtyIds([]);
+      setSelectedIds([]);
+      setEditingCell(null);
+      setNotice(`${created.length + updated.length}개 보금자리 정보를 저장했습니다.`);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  async function deleteSelected() {
+    if (selectedIds.length === 0) {
+      setNotice('삭제할 보금자리를 선택하세요.');
+      return;
+    }
+    const persistedIds = selectedIds.filter((id) => typeof id === 'number');
+    setMessage('');
+    setNotice('');
+    try {
+      if (persistedIds.length > 0) await api('/api/homes', { method: 'DELETE', body: JSON.stringify(persistedIds) });
+      setRows((current) => current.filter((row) => !selectedIds.includes(row.id)));
+      setDirtyIds((current) => current.filter((id) => !selectedIds.includes(id)));
+      setSelectedIds([]);
+      setNotice(`${selectedIds.length}개 보금자리 정보를 삭제했습니다.`);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  function cell(row, field, type = 'text') {
+    const editing = row.isNew || (editingCell?.rowId === row.id && editingCell?.field === field);
+    if (!editing) {
+      return <span className="read-text" onDoubleClick={() => setEditingCell({ rowId: row.id, field })}>{type === 'money' ? currency(row[field]) : (row[field] || '-')}</span>;
+    }
+    if (type === 'parking') {
+      return (
+        <select autoFocus={!row.isNew} value={row[field] ?? ''} onBlur={() => setEditingCell(null)} onChange={(event) => updateRow(row.id, field, event.target.value)}>
+          <option value="">선택</option>
+          <option value="여유">여유</option>
+          <option value="혼잡">혼잡</option>
+        </select>
+      );
+    }
+    return <input autoFocus={!row.isNew} type={type === 'money' ? 'number' : 'text'} value={row[field] ?? ''} onBlur={() => setEditingCell(null)} onChange={(event) => updateRow(row.id, field, event.target.value)} />;
+  }
+
+  useEffect(() => {
+    loadRows();
+  }, []);
+
+  return (
+    <main className="app-shell wide-shell">
+      <section className="hero compact-hero">
+        <div>
+          <p className="eyebrow">Power 프로젝트</p>
+          <h1>보금자리</h1>
+          <p className="summary">아파트 후보의 위치, 면적, 가격 정보를 비교합니다.</p>
+        </div>
+        <button className="icon-button" type="button" onClick={loadRows} disabled={isLoading} aria-label="새로고침"><RefreshCw size={18} /></button>
+      </section>
+      {message && <p className="message">{message}</p>}
+      {notice && <p className="saved-notice">{notice}</p>}
+      <section className="table-panel">
+        <div className="table-toolbar">
+          <span className={`pending-inline ${hasPendingChanges ? 'active' : ''}`}>{pendingText}</span>
+          <div className="table-toolbar-actions">
+            <button className="small-action" type="button" onClick={addRow}><Plus size={14} /> 행 추가</button>
+            <button className="small-delete" type="button" onClick={deleteSelected}>삭제</button>
+            <button className={`small-save ${hasPendingChanges ? 'has-pending' : ''}`} type="button" onClick={saveRows}>저장</button>
+          </div>
+        </div>
+        <div className="grid-table-wrap vendor-table-wrap">
+          <table className="vendor-table home-table">
+            <thead>
+              <tr>
+                <th>로우선택</th>
+                <th><PrettyCheckbox checked={isAllSelected} onChange={(checked) => setSelectedIds(checked ? visibleIds : [])} tone="danger" /></th>
+                <th>아파트명</th>
+                <th>위치</th>
+                <th>공급면적</th>
+                <th>평수</th>
+                <th>호갱노노 금액</th>
+                <th>네이버 금액</th>
+                <th>주차공간</th>
+                <th>
+                  <span className="tooltip-header">
+                    해방향
+                    <span className="help-tip" tabIndex="0" aria-label="해방향 설명">
+                      <HelpCircle size={14} />
+                      <span className="help-bubble">
+                        {`동향: 아침 일찍 해가 깊게 들어 오전에 활동이 많은 분들에게 좋습니다.
+서향: 오후 늦게까지 해가 길게 들어 겨울철에 따뜻하며, 맞벌이 가구에게 적합합니다.
+남동향 / 남서향: 남향을 기준으로 동쪽이나 서쪽으로 약간 치우친 방향으로, 남향 다음으로 선호도가 높습니다.`}
+                      </span>
+                    </span>
+                  </span>
+                </th>
+                <th>메모</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && <tr><td className="empty-table" colSpan="11"><strong>표시할 보금자리가 없습니다.</strong><span>행 추가로 후보를 입력하세요.</span></td></tr>}
+              {rows.map((row) => (
+                <tr
+                  key={row.id}
+                  className={`${row.isNew ? 'new-row' : ''} ${draggedId && dragOverId === row.id && draggedId !== row.id ? 'drag-over-row' : ''}`}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setDragOverId(row.id);
+                  }}
+                  onDragLeave={() => setDragOverId((current) => current === row.id ? null : current)}
+                  onDrop={() => reorder(row)}
+                >
+                  <td
+                    className="drag-column"
+                    draggable
+                    onDragStart={() => {
+                      setDraggedId(row.id);
+                      setDragOverId(null);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedId(null);
+                      setDragOverId(null);
+                    }}
+                  ><GripVertical size={16} /></td>
+                  <td className="check-column"><PrettyCheckbox checked={selectedIds.includes(row.id)} onChange={(checked) => setSelectedIds((current) => checked ? [...current, row.id] : current.filter((id) => id !== row.id))} tone="danger" /></td>
+                  <td>{cell(row, 'apartmentName')}</td>
+                  <td>{cell(row, 'location')}</td>
+                  <td>{cell(row, 'supplyArea')}</td>
+                  <td>{cell(row, 'pyeong')}</td>
+                  <td>{cell(row, 'hogangnonoAmount', 'money')}</td>
+                  <td>{cell(row, 'naverAmount', 'money')}</td>
+                  <td>{cell(row, 'parkingStatus', 'parking')}</td>
+                  <td>{cell(row, 'sunDirection')}</td>
+                  <td>{row.isNew || (editingCell?.rowId === row.id && editingCell?.field === 'memo') ? <textarea value={row.memo ?? ''} onBlur={() => setEditingCell(null)} onChange={(event) => updateRow(row.id, 'memo', event.target.value)} /> : <span className="read-text memo-text multi-line" onDoubleClick={() => setEditingCell({ rowId: row.id, field: 'memo' })}>{row.memo || '-'}</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function SettingsPage({ settings, onSettingsChange }) {
+  const [message, setMessage] = useState('');
+  const [notice, setNotice] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+
+  async function updateDarkMode(enabled) {
+    setMessage('');
+    setNotice('');
+    onSettingsChange({ ...settings, darkMode: enabled });
+    setIsSaving(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/settings/dark-mode`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error(text ? JSON.parse(text).message ?? text : '설정을 저장하지 못했습니다.');
+      onSettingsChange(text ? JSON.parse(text) : { darkMode: enabled });
+      setNotice('설정을 저장했습니다.');
+    } catch (error) {
+      onSettingsChange({ ...settings, darkMode: !enabled });
+      setMessage(error.message);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function updateDefaultPage(page) {
+    const previousSettings = settings;
+    const nextSettings = { ...settings, defaultPage: page };
+    setMessage('');
+    setNotice('');
+    onSettingsChange(nextSettings);
+    setIsSaving(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/settings/default-page`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ page })
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error(text ? JSON.parse(text).message ?? text : '설정을 저장하지 못했습니다.');
+      onSettingsChange(normalizeSettings(text ? JSON.parse(text) : nextSettings));
+      setNotice('설정을 저장했습니다.');
+    } catch (error) {
+      onSettingsChange(previousSettings);
+      setMessage(error.message);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <main className="app-shell wide-shell">
+      <section className="hero compact-hero">
+        <div>
+          <p className="eyebrow">Power 프로젝트</p>
+          <h1>설정</h1>
+          <p className="summary">사용자별 화면 옵션을 관리합니다.</p>
+        </div>
+      </section>
+      {message && <p className="message">{message}</p>}
+      {notice && <p className="saved-notice">{notice}</p>}
+      <section className="settings-panel">
+        <div className="settings-row">
+          <div>
+            <strong>다크모드</strong>
+            <span>선택한 값은 DB에 저장되어 다음 입장 시에도 유지됩니다.</span>
+          </div>
+          <PrettyCheckbox checked={settings.darkMode} onChange={updateDarkMode} label={isSaving ? '저장 중' : '사용'} />
+        </div>
+        <div className="settings-row">
+          <div>
+            <strong>첫 화면 메뉴</strong>
+            <span>로그인하거나 새로고침하면 선택한 메뉴로 이동합니다.</span>
+          </div>
+          <select value={settings.defaultPage} onChange={(event) => updateDefaultPage(event.target.value)} disabled={isSaving}>
+            {START_PAGE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function App() {
   const [activePage, setActivePage] = useState('checklist');
   const [user, setUser] = useState(null);
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  async function loadSettings() {
+    const response = await fetch(`${API_BASE_URL}/api/settings`);
+    if (!response.ok) {
+      setSettings(DEFAULT_SETTINGS);
+      return DEFAULT_SETTINGS;
+    }
+    const nextSettings = normalizeSettings(await response.json());
+    setSettings(nextSettings);
+    return nextSettings;
+  }
 
   useEffect(() => {
     async function checkLogin() {
@@ -2215,10 +3097,12 @@ function App() {
         const response = await fetch(`${API_BASE_URL}/api/auth/me`);
         if (!response.ok) {
           setUser(null);
+          setSettings(DEFAULT_SETTINGS);
           return;
         }
         setUser(await response.json());
-        setActivePage('checklist');
+        const nextSettings = await loadSettings();
+        setActivePage(nextSettings.defaultPage);
       } finally {
         setIsCheckingAuth(false);
       }
@@ -2229,6 +3113,7 @@ function App() {
   async function logout() {
     await fetch(`${API_BASE_URL}/api/auth/logout`, { method: 'POST' });
     setUser(null);
+    setSettings(DEFAULT_SETTINGS);
     setActivePage('checklist');
   }
 
@@ -2244,14 +3129,15 @@ function App() {
   }
 
   if (!user) {
-    return <LoginPage onLogin={(nextUser) => {
+    return <LoginPage onLogin={async (nextUser) => {
       setUser(nextUser);
-      setActivePage('checklist');
+      const nextSettings = await loadSettings();
+      setActivePage(nextSettings.defaultPage);
     }} />;
   }
 
   return (
-    <div className={`workspace-layout ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <div className={`workspace-layout ${isSidebarCollapsed ? 'sidebar-collapsed' : ''} ${settings.darkMode ? 'dark-mode' : ''}`}>
       <Sidebar
         activePage={activePage}
         onNavigate={setActivePage}
@@ -2264,6 +3150,10 @@ function App() {
         {activePage === 'checklist' && <ChecklistPage />}
         {activePage === 'personnel' && <PersonnelPage />}
         {activePage === 'budget' && <BudgetPage />}
+        {activePage === 'weddingHall' && <WeddingHallPage />}
+        {activePage === 'sdm' && <SdmPage />}
+        {activePage === 'home' && <HomePage />}
+        {activePage === 'settings' && <SettingsPage settings={settings} onSettingsChange={setSettings} />}
       </div>
     </div>
   );
