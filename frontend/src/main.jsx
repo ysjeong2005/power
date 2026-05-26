@@ -28,6 +28,163 @@ function currency(value) {
   return `${Number(value || 0).toLocaleString('ko-KR')}원`;
 }
 
+function normalizePasteHeader(value) {
+  return (value ?? '').replace(/\s/g, '').toLowerCase();
+}
+
+function parsePastedTable(text, knownHeaders) {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim() !== '');
+  if (lines.length === 0) {
+    return { lines: [], hasHeader: false, headerMap: new Map() };
+  }
+  const firstValues = lines[0].split('\t');
+  const normalizedKnownHeaders = knownHeaders.map(normalizePasteHeader);
+  const headerMatchCount = firstValues.filter((value) => normalizedKnownHeaders.includes(normalizePasteHeader(value))).length;
+  const hasHeader = headerMatchCount >= 2;
+  const headerMap = new Map();
+  if (hasHeader) {
+    firstValues.forEach((value, index) => headerMap.set(normalizePasteHeader(value), index));
+  }
+  return { lines: hasHeader ? lines.slice(1) : lines, hasHeader, headerMap };
+}
+
+function pastedValue(values, headerMap, names, fallbackIndex) {
+  const foundIndex = names.map(normalizePasteHeader).map((name) => headerMap.get(name)).find((index) => index !== undefined);
+  return values[foundIndex ?? fallbackIndex] ?? '';
+}
+
+function parseAmount(value) {
+  const normalized = String(value ?? '').replace(/[^\d.-]/g, '');
+  return normalized ? Number(normalized) : 0;
+}
+
+function parseBoolean(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return ['y', 'yes', 'o', 'true', '1', '완료', '있음', '예', '청첩장'].includes(normalized);
+}
+
+function makeNewId(prefix = 'new') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function createExcelDownload({ sheetName, sheets, filenamePrefix }) {
+  const ExcelJS = (await import('exceljs')).default;
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Power';
+  workbook.created = new Date();
+  const workbookSheets = sheets ?? [sheetName];
+
+  workbookSheets.forEach((sheetConfig) => {
+    const worksheet = workbook.addWorksheet(sheetConfig.name);
+    worksheet.columns = sheetConfig.columns;
+    worksheet.addRows(sheetConfig.rows);
+    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+    worksheet.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: 1, column: worksheet.columns.length }
+    };
+    worksheet.getRow(1).eachCell((cell) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F4EF' } };
+      cell.font = { bold: true, color: { argb: 'FF1D6F62' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      cell.border = { bottom: { style: 'thin', color: { argb: 'FFD7DFDA' } } };
+    });
+    worksheet.eachRow((row, rowNumber) => {
+      row.eachCell((cell) => {
+        cell.alignment = { vertical: 'middle', wrapText: true };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFE4EBE7' } },
+          left: { style: 'thin', color: { argb: 'FFE4EBE7' } },
+          bottom: { style: 'thin', color: { argb: 'FFE4EBE7' } },
+          right: { style: 'thin', color: { argb: 'FFE4EBE7' } }
+        };
+      });
+    });
+    sheetConfig.columns.forEach((column) => {
+      if (column.numFmt) {
+        worksheet.getColumn(column.key).numFmt = column.numFmt;
+      }
+    });
+  });
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const filename = `${filenamePrefix}_${today}.xlsx`;
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  return { url, filename };
+}
+
+function useExcelDownloadLink() {
+  const [download, setDownload] = useState(null);
+  useEffect(() => {
+    return () => {
+      if (download?.url) URL.revokeObjectURL(download.url);
+    };
+  }, [download]);
+
+  function keepDownload(nextDownload) {
+    setDownload((current) => {
+      if (current?.url) URL.revokeObjectURL(current.url);
+      return nextDownload;
+    });
+  }
+
+  return [download, keepDownload];
+}
+
+function DownloadNotice({ message, download }) {
+  if (!message) return null;
+  return (
+    <p className="saved-notice">
+      {message}
+      {download && (
+        <a className="download-link" href={download.url} download={download.filename}>
+          파일 받기
+        </a>
+      )}
+    </p>
+  );
+}
+
+function PasteModal({ title, guide, example, value, message, onChange, onClose, onApply }) {
+  return (
+    <div className="modal-backdrop">
+      <section className="category-modal paste-modal">
+        <div className="modal-title-row">
+          <h2>{title}</h2>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="닫기">
+            <X size={18} />
+          </button>
+        </div>
+        <p>엑셀에서 아래 순서로 복사한 뒤 붙여넣으세요. 헤더가 포함되어 있어도 처리됩니다.</p>
+        <code>{guide}</code>
+        <textarea
+          className="paste-textarea"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={example}
+          autoFocus
+        />
+        {message && <p className="category-message paste-message">{message}</p>}
+        <div className="paste-actions">
+          <button className="modal-save" type="button" onClick={onApply}>신규 로우 추가</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function PrettyCheckbox({ checked, onChange, label, tone = 'default' }) {
   return (
     <label className={`pretty-check ${tone}`}>
@@ -175,6 +332,10 @@ function PersonnelPage() {
   const [editingCell, setEditingCell] = useState(null);
   const [dirtyRowIds, setDirtyRowIds] = useState([]);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [pasteMessage, setPasteMessage] = useState('');
+  const [excelDownload, setExcelDownload] = useState(null);
 
   const majors = useMemo(() => [...new Set(categories.map((category) => category.major))], [categories]);
   const filteredMinorOptions = useMemo(() => {
@@ -223,6 +384,14 @@ function PersonnelPage() {
       return acc;
     }, { people: 0, applied: 0, amount: 0 });
   }, [groupedRows]);
+
+  useEffect(() => {
+    return () => {
+      if (excelDownload?.url) {
+        URL.revokeObjectURL(excelDownload.url);
+      }
+    };
+  }, [excelDownload]);
 
   async function api(path, options = {}) {
     const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -289,6 +458,214 @@ function PersonnelPage() {
       { id: `new-${Date.now()}`, categoryId: categories[0].id, relation: '', name: '', amount: 0, invitation: false, memo: '', isNew: true },
       ...current
     ]);
+  }
+
+  function openPasteModal() {
+    if (categories.length === 0) {
+      setCategoryMessage('');
+      setCategoryNotice('');
+      setIsModalOpen(true);
+      return;
+    }
+    setPasteText('');
+    setPasteMessage('');
+    setIsPasteModalOpen(true);
+  }
+
+  function normalizePasteHeader(value) {
+    return (value ?? '').replace(/\s/g, '').toLowerCase();
+  }
+
+  function parseAmount(value) {
+    const normalized = String(value ?? '').replace(/[^\d.-]/g, '');
+    return normalized ? Number(normalized) : 0;
+  }
+
+  function parseInvitation(value) {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return ['y', 'yes', 'o', 'true', '1', '청첩장', '있음', '예'].includes(normalized);
+  }
+
+  function findCategoryByNames(major, minor) {
+    const nextMajor = String(major ?? '').trim();
+    const nextMinor = String(minor ?? '').trim();
+    return categories.find((category) => category.major === nextMajor && category.minor === nextMinor);
+  }
+
+  function rowValueByHeader(values, headerMap, names, fallbackIndex) {
+    const foundIndex = names.map(normalizePasteHeader).map((name) => headerMap.get(name)).find((index) => index !== undefined);
+    return values[foundIndex ?? fallbackIndex] ?? '';
+  }
+
+  function applyPastedRows() {
+    const lines = pasteText
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .filter((line) => line.trim() !== '');
+
+    if (lines.length === 0) {
+      setPasteMessage('붙여넣을 엑셀 데이터를 입력하세요.');
+      return;
+    }
+
+    const firstValues = lines[0].split('\t');
+    const knownHeaders = ['대분류', '소분류', '성명', '대상자와관계', '관계', '금액', '청첩장', '메모'];
+    const headerMatchCount = firstValues.filter((value) => knownHeaders.includes(normalizePasteHeader(value))).length;
+    const hasHeader = headerMatchCount >= 2;
+    const headerMap = new Map();
+    if (hasHeader) {
+      firstValues.forEach((value, index) => headerMap.set(normalizePasteHeader(value), index));
+    }
+
+    const dataLines = hasHeader ? lines.slice(1) : lines;
+    const nextRows = [];
+    const errors = [];
+
+    dataLines.forEach((line, index) => {
+      const values = line.split('\t');
+      const rowNumber = index + 1 + (hasHeader ? 1 : 0);
+      const major = rowValueByHeader(values, headerMap, ['대분류'], 0);
+      const minor = rowValueByHeader(values, headerMap, ['소분류'], 1);
+      const category = findCategoryByNames(major, minor);
+      if (!category) {
+        errors.push(`${rowNumber}행: ${major || '-'} / ${minor || '-'} 분류가 없습니다.`);
+        return;
+      }
+      const name = rowValueByHeader(values, headerMap, ['성명', '이름'], 2);
+      if (!String(name).trim()) {
+        errors.push(`${rowNumber}행: 성명이 비어 있습니다.`);
+        return;
+      }
+      nextRows.push({
+        id: `new-${Date.now()}-${index}`,
+        categoryId: category.id,
+        name: String(name).trim(),
+        relation: String(rowValueByHeader(values, headerMap, ['대상자와관계', '관계'], 3)).trim(),
+        amount: parseAmount(rowValueByHeader(values, headerMap, ['금액'], 4)),
+        invitation: parseInvitation(rowValueByHeader(values, headerMap, ['청첩장'], 5)),
+        memo: String(rowValueByHeader(values, headerMap, ['메모'], 6)).trim(),
+        isNew: true
+      });
+    });
+
+    if (errors.length > 0) {
+      setPasteMessage(errors.slice(0, 5).join('\n') + (errors.length > 5 ? `\n외 ${errors.length - 5}건` : ''));
+      return;
+    }
+
+    if (nextRows.length === 0) {
+      setPasteMessage('추가할 대상자가 없습니다.');
+      return;
+    }
+
+    setRows((current) => [...nextRows, ...current]);
+    setSavedNotice(`엑셀 붙여넣기로 신규 ${nextRows.length}건을 추가했습니다. 저장 버튼을 눌러 DB에 반영하세요.`);
+    setPasteText('');
+    setPasteMessage('');
+    setIsPasteModalOpen(false);
+  }
+
+  async function downloadPersonnelExcel() {
+    const exportRows = visibleRows
+      .map((row) => {
+        const category = categories.find((item) => item.id === row.categoryId);
+        if (!category) return null;
+        const peopleCount = visibleRows.filter((item) => item.categoryId === row.categoryId).length;
+        return {
+          major: category.major,
+          minor: category.minor,
+          percent: category.percent,
+          name: row.name,
+          relation: row.relation,
+          amount: Number(row.amount || 0),
+          invitation: row.invitation ? 'Y' : 'N',
+          memo: row.memo ?? '',
+          peopleCount,
+          appliedCount: Math.round(peopleCount * category.percent / 100)
+        };
+      })
+      .filter(Boolean);
+
+    if (exportRows.length === 0) {
+      setSavedNotice('다운로드할 인원관리 데이터가 없습니다.');
+      return;
+    }
+
+    setMessage('');
+    setSavedNotice('엑셀 파일을 생성하고 있습니다.');
+
+    try {
+      const ExcelJS = (await import('exceljs')).default;
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'Power';
+      workbook.created = new Date();
+      const worksheet = workbook.addWorksheet('인원관리');
+      worksheet.columns = [
+        { header: '대분류', key: 'major', width: 16 },
+        { header: '소분류', key: 'minor', width: 16 },
+        { header: '퍼센티지', key: 'percent', width: 12 },
+        { header: '성명', key: 'name', width: 16 },
+        { header: '대상자와 관계', key: 'relation', width: 18 },
+        { header: '금액', key: 'amount', width: 14 },
+        { header: '청첩장', key: 'invitation', width: 10 },
+        { header: '메모', key: 'memo', width: 32 },
+        { header: '대상자 수', key: 'peopleCount', width: 12 },
+        { header: '적용 수', key: 'appliedCount', width: 12 }
+      ];
+      worksheet.addRows(exportRows);
+      worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+      worksheet.autoFilter = {
+        from: { row: 1, column: 1 },
+        to: { row: 1, column: worksheet.columns.length }
+      };
+      worksheet.getRow(1).eachCell((cell) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F4EF' } };
+        cell.font = { bold: true, color: { argb: 'FF1D6F62' } };
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        cell.border = { bottom: { style: 'thin', color: { argb: 'FFD7DFDA' } } };
+      });
+      worksheet.eachRow((row, rowNumber) => {
+        row.eachCell((cell) => {
+          cell.alignment = { vertical: 'middle', wrapText: true };
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFE4EBE7' } },
+            left: { style: 'thin', color: { argb: 'FFE4EBE7' } },
+            bottom: { style: 'thin', color: { argb: 'FFE4EBE7' } },
+            right: { style: 'thin', color: { argb: 'FFE4EBE7' } }
+          };
+          if (rowNumber > 1 && [3, 9, 10].includes(cell.col)) {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F8F7' } };
+          }
+        });
+      });
+      worksheet.getColumn('percent').numFmt = '0"%"';
+      worksheet.getColumn('amount').numFmt = '#,##0"원"';
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const filename = `power_인원관리_${today}.xlsx`;
+
+      setExcelDownload((current) => {
+        if (current?.url) {
+          URL.revokeObjectURL(current.url);
+        }
+        return { url, filename };
+      });
+
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setSavedNotice(`${exportRows.length}건의 인원관리 엑셀 파일을 생성했습니다.`);
+    } catch (error) {
+      setSavedNotice('');
+      setMessage(error.message || '엑셀 다운로드 중 오류가 발생했습니다.');
+    }
   }
 
   function updateRow(rowId, field, value) {
@@ -553,7 +930,16 @@ function PersonnelPage() {
         </section>
 
         {message && <p className="message">{message}</p>}
-        {savedNotice && <p className="saved-notice">{savedNotice}</p>}
+        {savedNotice && (
+          <p className="saved-notice">
+            {savedNotice}
+            {excelDownload && (
+              <a className="download-link" href={excelDownload.url} download={excelDownload.filename}>
+                파일 받기
+              </a>
+            )}
+          </p>
+        )}
         <section className="table-panel">
           <div className="table-toolbar">
             <span className={`pending-inline ${hasPendingChanges ? 'active' : ''}`}>
@@ -565,6 +951,12 @@ function PersonnelPage() {
               </button>
               <button className="small-action" type="button" onClick={addRow}>
                 <Plus size={14} /> 행 추가
+              </button>
+              <button className="small-action" type="button" onClick={openPasteModal}>
+                엑셀 붙여넣기
+              </button>
+              <button className="small-action" type="button" onClick={downloadPersonnelExcel}>
+                엑셀 다운로드
               </button>
               <button className="small-delete" type="button" onClick={deleteSelectedRows}>
                 삭제
@@ -876,6 +1268,31 @@ function PersonnelPage() {
             </section>
           </div>
         )}
+        {isPasteModalOpen && (
+          <div className="modal-backdrop">
+            <section className="category-modal paste-modal">
+              <div className="modal-title-row">
+                <h2>엑셀 붙여넣기</h2>
+                <button className="icon-button" type="button" onClick={() => setIsPasteModalOpen(false)} aria-label="닫기">
+                  <X size={18} />
+                </button>
+              </div>
+              <p>엑셀에서 아래 순서로 복사한 뒤 붙여넣으세요. 헤더가 포함되어 있어도 처리됩니다.</p>
+              <code>대분류  소분류  성명  대상자와 관계  금액  청첩장  메모</code>
+              <textarea
+                className="paste-textarea"
+                value={pasteText}
+                onChange={(event) => setPasteText(event.target.value)}
+                placeholder={'가족\t직계\t홍길동\t부\t100000\tY\t메모'}
+                autoFocus
+              />
+              {pasteMessage && <p className="category-message paste-message">{pasteMessage}</p>}
+              <div className="paste-actions">
+                <button className="modal-save" type="button" onClick={applyPastedRows}>신규 로우 추가</button>
+              </div>
+            </section>
+          </div>
+        )}
       </main>
   );
 }
@@ -896,6 +1313,10 @@ function ChecklistPage() {
   const [dragOverCategoryId, setDragOverCategoryId] = useState(null);
   const [editingCell, setEditingCell] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [pasteMessage, setPasteMessage] = useState('');
+  const [excelDownload, setExcelDownload] = useExcelDownloadLink();
 
   const categoryColors = ['#e8f4ef', '#eef6ff', '#fff4df', '#f3ecff', '#fceeee'];
   const visibleIds = items.map((item) => item.id);
@@ -986,6 +1407,107 @@ function ChecklistPage() {
     }
     setNotice('');
     setItems((current) => [...current, createDraftItem(categoryId)]);
+  }
+
+  function openPasteModal() {
+    if (categories.length === 0) {
+      setCategoryMessage('');
+      setCategoryNotice('');
+      setIsModalOpen(true);
+      return;
+    }
+    setPasteText('');
+    setPasteMessage('');
+    setIsPasteModalOpen(true);
+  }
+
+  function applyPastedItems() {
+    const { lines, hasHeader, headerMap } = parsePastedTable(pasteText, ['분류', '카테고리', '할일', '담당', '메모', '완료여부', '완료일']);
+    if (lines.length === 0) {
+      setPasteMessage('붙여넣을 엑셀 데이터를 입력하세요.');
+      return;
+    }
+    const nextItems = [];
+    const errors = [];
+    lines.forEach((line, index) => {
+      const values = line.split('\t');
+      const rowNumber = index + 1 + (hasHeader ? 1 : 0);
+      const categoryName = String(pastedValue(values, headerMap, ['분류'], 0)).trim();
+      const category = categories.find((item) => item.name === categoryName);
+      if (!category) {
+        errors.push(`${rowNumber}행: ${categoryName || '-'} 분류가 없습니다.`);
+        return;
+      }
+      const todo = String(pastedValue(values, headerMap, ['할일', '할 일'], 2)).trim();
+      if (!todo) {
+        errors.push(`${rowNumber}행: 할일이 비어 있습니다.`);
+        return;
+      }
+      nextItems.push({
+        ...createDraftItem(category.id),
+        id: makeNewId('new-checklist'),
+        itemCategory: String(pastedValue(values, headerMap, ['카테고리'], 1)).trim(),
+        todo,
+        owner: String(pastedValue(values, headerMap, ['담당'], 3)).trim(),
+        memo: String(pastedValue(values, headerMap, ['메모'], 4)).trim(),
+        completed: parseBoolean(pastedValue(values, headerMap, ['완료여부', '완료'], 5)),
+        completedDate: String(pastedValue(values, headerMap, ['완료일'], 6)).trim()
+      });
+    });
+    if (errors.length > 0) {
+      setPasteMessage(errors.slice(0, 5).join('\n') + (errors.length > 5 ? `\n외 ${errors.length - 5}건` : ''));
+      return;
+    }
+    if (nextItems.length === 0) {
+      setPasteMessage('추가할 체크리스트가 없습니다.');
+      return;
+    }
+    setItems((current) => [...nextItems, ...current]);
+    setNotice(`엑셀 붙여넣기로 신규 ${nextItems.length}건을 추가했습니다. 저장 버튼을 눌러 DB에 반영하세요.`);
+    setIsPasteModalOpen(false);
+    setPasteText('');
+    setPasteMessage('');
+  }
+
+  async function downloadChecklistExcel() {
+    const exportRows = categories.flatMap((category) => itemsForCategory(category.id).map((item) => ({
+      categoryName: category.name,
+      itemCategory: item.itemCategory ?? '',
+      todo: item.todo ?? '',
+      owner: item.owner ?? '',
+      memo: item.memo ?? '',
+      completed: item.completed ? '완료' : '미완료',
+      completedDate: item.completedDate ?? ''
+    })));
+    if (exportRows.length === 0) {
+      setNotice('다운로드할 체크리스트 데이터가 없습니다.');
+      return;
+    }
+    setMessage('');
+    setNotice('엑셀 파일을 생성하고 있습니다.');
+    try {
+      const download = await createExcelDownload({
+        filenamePrefix: 'power_체크리스트',
+        sheets: [{
+          name: '체크리스트',
+          columns: [
+            { header: '분류', key: 'categoryName', width: 18 },
+            { header: '카테고리', key: 'itemCategory', width: 18 },
+            { header: '할일', key: 'todo', width: 36 },
+            { header: '담당', key: 'owner', width: 14 },
+            { header: '메모', key: 'memo', width: 32 },
+            { header: '완료여부', key: 'completed', width: 12 },
+            { header: '완료일', key: 'completedDate', width: 14 }
+          ],
+          rows: exportRows
+        }]
+      });
+      setExcelDownload(download);
+      setNotice(`${exportRows.length}건의 체크리스트 엑셀 파일을 생성했습니다.`);
+    } catch (error) {
+      setNotice('');
+      setMessage(error.message || '엑셀 다운로드 중 오류가 발생했습니다.');
+    }
   }
 
   function updateItem(itemId, field, value) {
@@ -1229,7 +1751,7 @@ function ChecklistPage() {
       </section>
 
       {message && <p className="message">{message}</p>}
-      {notice && <p className="saved-notice">{notice}</p>}
+      <DownloadNotice message={notice} download={excelDownload} />
 
       <section className="table-panel checklist-panel">
         <div className="table-toolbar">
@@ -1241,6 +1763,8 @@ function ChecklistPage() {
             <button className="small-action" type="button" onClick={() => addItem()}>
               <Plus size={14} /> 행 추가
             </button>
+            <button className="small-action" type="button" onClick={openPasteModal}>엑셀 붙여넣기</button>
+            <button className="small-action" type="button" onClick={downloadChecklistExcel}>엑셀 다운로드</button>
             <button className="small-delete" type="button" onClick={deleteSelectedItems}>삭제</button>
             <button className={`small-save ${newCount > 0 || editCount > 0 ? 'has-pending' : ''}`} type="button" onClick={saveItems}>저장</button>
           </div>
@@ -1473,6 +1997,18 @@ function ChecklistPage() {
           </section>
         </div>
       )}
+      {isPasteModalOpen && (
+        <PasteModal
+          title="체크리스트 엑셀 붙여넣기"
+          guide="분류  카테고리  할일  담당  메모  완료여부  완료일"
+          example={'결혼 6개월 전\t예약\t웨딩홀 상담 예약\tzeroy\t메모\t미완료\t'}
+          value={pasteText}
+          message={pasteMessage}
+          onChange={setPasteText}
+          onClose={() => setIsPasteModalOpen(false)}
+          onApply={applyPastedItems}
+        />
+      )}
     </main>
   );
 }
@@ -1496,6 +2032,14 @@ function BudgetPage() {
   const [assetMessage, setAssetMessage] = useState('');
   const [assetNotice, setAssetNotice] = useState('');
   const [editingCell, setEditingCell] = useState(null);
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [pasteMessage, setPasteMessage] = useState('');
+  const [isAssetPasteModalOpen, setIsAssetPasteModalOpen] = useState(false);
+  const [assetPasteText, setAssetPasteText] = useState('');
+  const [assetPasteMessage, setAssetPasteMessage] = useState('');
+  const [excelDownload, setExcelDownload] = useExcelDownloadLink();
+  const [assetExcelDownload, setAssetExcelDownload] = useExcelDownloadLink();
   const [isSimpleView, setIsSimpleView] = useState(() => {
     const saved = window.localStorage.getItem(BUDGET_SIMPLE_VIEW_KEY);
     return saved === null ? true : saved === 'true';
@@ -1606,6 +2150,133 @@ function BudgetPage() {
     ]);
   }
 
+  function openPasteModal() {
+    if (categories.length === 0) {
+      setCategoryMessage('');
+      setCategoryNotice('');
+      setIsModalOpen(true);
+      return;
+    }
+    setPasteText('');
+    setPasteMessage('');
+    setIsPasteModalOpen(true);
+  }
+
+  function applyPastedBudgetItems() {
+    const { lines, hasHeader, headerMap } = parsePastedTable(pasteText, ['대분류', '세부항목', '지출', '비고']);
+    if (lines.length === 0) {
+      setPasteMessage('붙여넣을 엑셀 데이터를 입력하세요.');
+      return;
+    }
+    const nextItems = [];
+    const errors = [];
+    lines.forEach((line, index) => {
+      const values = line.split('\t');
+      const rowNumber = index + 1 + (hasHeader ? 1 : 0);
+      const categoryNameValue = String(pastedValue(values, headerMap, ['대분류', '분류'], 0)).trim();
+      const category = categories.find((item) => item.name === categoryNameValue);
+      if (!category) {
+        errors.push(`${rowNumber}행: ${categoryNameValue || '-'} 대분류가 없습니다.`);
+        return;
+      }
+      const detail = String(pastedValue(values, headerMap, ['세부항목', '항목'], 1)).trim();
+      if (!detail) {
+        errors.push(`${rowNumber}행: 세부항목이 비어 있습니다.`);
+        return;
+      }
+      nextItems.push({
+        id: makeNewId('new-budget'),
+        categoryId: category.id,
+        detail,
+        spentAmount: parseAmount(pastedValue(values, headerMap, ['지출', '지출원', '지출(원)'], 2)),
+        note: String(pastedValue(values, headerMap, ['비고', '메모'], 3)).trim(),
+        isNew: true
+      });
+    });
+    if (errors.length > 0) {
+      setPasteMessage(errors.slice(0, 5).join('\n') + (errors.length > 5 ? `\n외 ${errors.length - 5}건` : ''));
+      return;
+    }
+    if (nextItems.length === 0) {
+      setPasteMessage('추가할 예산 항목이 없습니다.');
+      return;
+    }
+    setItems((current) => [...nextItems, ...current]);
+    setNotice(`엑셀 붙여넣기로 신규 ${nextItems.length}건을 추가했습니다. 저장 버튼을 눌러 DB에 반영하세요.`);
+    setIsPasteModalOpen(false);
+    setPasteText('');
+    setPasteMessage('');
+  }
+
+  async function downloadBudgetExcel() {
+    const detailRows = items.map((item) => ({
+      categoryName: categoryName(item.categoryId),
+      detail: item.detail ?? '',
+      spentAmount: Number(item.spentAmount || 0),
+      note: item.note ?? ''
+    }));
+    if (detailRows.length === 0 && summaries.length === 0 && assets.length === 0) {
+      setNotice('다운로드할 예산관리 데이터가 없습니다.');
+      return;
+    }
+    setMessage('');
+    setNotice('엑셀 파일을 생성하고 있습니다.');
+    try {
+      const download = await createExcelDownload({
+        filenamePrefix: 'power_예산관리',
+        sheets: [
+          {
+            name: '대분류별 요약',
+            columns: [
+              { header: '대분류', key: 'categoryName', width: 18 },
+              { header: '배정금액', key: 'allocated', width: 16, numFmt: '#,##0"원"' },
+              { header: '지출합계', key: 'spent', width: 16, numFmt: '#,##0"원"' },
+              { header: '잔여금액', key: 'remaining', width: 16, numFmt: '#,##0"원"' }
+            ],
+            rows: summaries.map((summary) => ({
+              categoryName: summary.category.name,
+              allocated: summary.allocated,
+              spent: summary.spent,
+              remaining: summary.remaining
+            }))
+          },
+          {
+            name: '예산 상세 내역',
+            columns: [
+              { header: '대분류', key: 'categoryName', width: 18 },
+              { header: '세부항목', key: 'detail', width: 24 },
+              { header: '지출(원)', key: 'spentAmount', width: 16, numFmt: '#,##0"원"' },
+              { header: '비고', key: 'note', width: 32 }
+            ],
+            rows: detailRows
+          },
+          {
+            name: '나의 예산',
+            columns: [
+              { header: '소유자', key: 'owner', width: 14 },
+              { header: '구분', key: 'availability', width: 12 },
+              { header: '자산명', key: 'assetName', width: 20 },
+              { header: '금액', key: 'amount', width: 16, numFmt: '#,##0"원"' },
+              { header: '비고', key: 'note', width: 28 }
+            ],
+            rows: assets.map((asset) => ({
+              owner: asset.owner ?? '',
+              availability: asset.availability ?? '',
+              assetName: asset.assetName ?? '',
+              amount: Number(asset.amount || 0),
+              note: asset.note ?? ''
+            }))
+          }
+        ]
+      });
+      setExcelDownload(download);
+      setNotice('예산관리 엑셀 파일을 생성했습니다.');
+    } catch (error) {
+      setNotice('');
+      setMessage(error.message || '엑셀 다운로드 중 오류가 발생했습니다.');
+    }
+  }
+
   function updateItem(itemId, field, value) {
     setItems((current) => current.map((item) => item.id === itemId ? { ...item, [field]: value } : item));
     if (typeof itemId === 'number') {
@@ -1627,6 +2298,91 @@ function BudgetPage() {
       },
       ...current
     ]);
+  }
+
+  function openAssetPasteModal() {
+    setAssetPasteText('');
+    setAssetPasteMessage('');
+    setIsAssetPasteModalOpen(true);
+  }
+
+  function applyPastedAssets() {
+    const { lines, hasHeader, headerMap } = parsePastedTable(assetPasteText, ['소유자', '구분', '자산명', '금액', '비고']);
+    if (lines.length === 0) {
+      setAssetPasteMessage('붙여넣을 엑셀 데이터를 입력하세요.');
+      return;
+    }
+    const nextAssets = [];
+    const errors = [];
+    lines.forEach((line, index) => {
+      const values = line.split('\t');
+      const rowNumber = index + 1 + (hasHeader ? 1 : 0);
+      const owner = String(pastedValue(values, headerMap, ['소유자'], 0)).trim();
+      const assetName = String(pastedValue(values, headerMap, ['자산명', '항목'], 2)).trim();
+      if (!owner || !assetName) {
+        errors.push(`${rowNumber}행: 소유자와 자산명을 입력하세요.`);
+        return;
+      }
+      const availability = String(pastedValue(values, headerMap, ['구분'], 1)).trim() || '가용';
+      nextAssets.push({
+        id: makeNewId('new-asset'),
+        owner,
+        availability: availability === '비가용' ? '비가용' : '가용',
+        assetName,
+        amount: parseAmount(pastedValue(values, headerMap, ['금액'], 3)),
+        note: String(pastedValue(values, headerMap, ['비고', '메모'], 4)).trim(),
+        isNew: true
+      });
+    });
+    if (errors.length > 0) {
+      setAssetPasteMessage(errors.slice(0, 5).join('\n') + (errors.length > 5 ? `\n외 ${errors.length - 5}건` : ''));
+      return;
+    }
+    if (nextAssets.length === 0) {
+      setAssetPasteMessage('추가할 나의 예산 항목이 없습니다.');
+      return;
+    }
+    setAssets((current) => [...nextAssets, ...current]);
+    setAssetNotice(`엑셀 붙여넣기로 신규 ${nextAssets.length}건을 추가했습니다. 저장 버튼을 눌러 DB에 반영하세요.`);
+    setIsAssetPasteModalOpen(false);
+    setAssetPasteText('');
+    setAssetPasteMessage('');
+  }
+
+  async function downloadAssetsExcel() {
+    if (assets.length === 0) {
+      setAssetNotice('다운로드할 나의 예산 데이터가 없습니다.');
+      return;
+    }
+    setAssetMessage('');
+    setAssetNotice('엑셀 파일을 생성하고 있습니다.');
+    try {
+      const download = await createExcelDownload({
+        filenamePrefix: 'power_나의예산',
+        sheets: [{
+          name: '나의 예산',
+          columns: [
+            { header: '소유자', key: 'owner', width: 14 },
+            { header: '구분', key: 'availability', width: 12 },
+            { header: '자산명', key: 'assetName', width: 20 },
+            { header: '금액', key: 'amount', width: 16, numFmt: '#,##0"원"' },
+            { header: '비고', key: 'note', width: 28 }
+          ],
+          rows: assets.map((asset) => ({
+            owner: asset.owner ?? '',
+            availability: asset.availability ?? '',
+            assetName: asset.assetName ?? '',
+            amount: Number(asset.amount || 0),
+            note: asset.note ?? ''
+          }))
+        }]
+      });
+      setAssetExcelDownload(download);
+      setAssetNotice(`${assets.length}건의 나의 예산 엑셀 파일을 생성했습니다.`);
+    } catch (error) {
+      setAssetNotice('');
+      setAssetMessage(error.message || '엑셀 다운로드 중 오류가 발생했습니다.');
+    }
   }
 
   function updateAsset(assetId, field, value) {
@@ -1949,7 +2705,7 @@ function BudgetPage() {
       </section>
 
       {message && <p className="message">{message}</p>}
-      {notice && <p className="saved-notice">{notice}</p>}
+      <DownloadNotice message={notice} download={excelDownload} />
 
       <section className="table-panel budget-panel">
         <div className="budget-section">
@@ -2007,6 +2763,8 @@ function BudgetPage() {
                 <button className="small-action" type="button" onClick={addItem}>
                   <Plus size={14} /> 행 추가
                 </button>
+                <button className="small-action" type="button" onClick={openPasteModal}>엑셀 붙여넣기</button>
+                <button className="small-action" type="button" onClick={downloadBudgetExcel}>엑셀 다운로드</button>
                 <button className="small-delete" type="button" onClick={deleteSelectedItems}>삭제</button>
                 <button className={`small-save ${hasPendingChanges ? 'has-pending' : ''}`} type="button" onClick={saveItems}>저장</button>
               </div>
@@ -2189,7 +2947,16 @@ function BudgetPage() {
             </div>
 
             {assetMessage && <p className="category-message">{assetMessage}</p>}
-            {assetNotice && <p className="category-notice">{assetNotice}</p>}
+            {assetNotice && (
+              <p className="category-notice">
+                {assetNotice}
+                {assetExcelDownload && (
+                  <a className="download-link" href={assetExcelDownload.url} download={assetExcelDownload.filename}>
+                    파일 받기
+                  </a>
+                )}
+              </p>
+            )}
 
             <div className="table-toolbar asset-modal-toolbar">
               <span className={`pending-inline ${hasAssetPendingChanges ? 'active' : ''}`}>
@@ -2202,6 +2969,8 @@ function BudgetPage() {
                 <button className="small-action" type="button" onClick={addAsset}>
                   <Plus size={14} /> 행 추가
                 </button>
+                <button className="small-action" type="button" onClick={openAssetPasteModal}>엑셀 붙여넣기</button>
+                <button className="small-action" type="button" onClick={downloadAssetsExcel}>엑셀 다운로드</button>
                 <button className="small-delete" type="button" onClick={deleteSelectedAssets}>삭제</button>
                 <button className={`small-save ${hasAssetPendingChanges ? 'has-pending' : ''}`} type="button" onClick={saveAssets}>저장</button>
               </div>
@@ -2265,6 +3034,32 @@ function BudgetPage() {
           </section>
         </div>
       )}
+
+      {isPasteModalOpen && (
+        <PasteModal
+          title="예산 상세 내역 엑셀 붙여넣기"
+          guide="대분류  세부항목  지출(원)  비고"
+          example={'식장\t대관료\t4000000\t메모'}
+          value={pasteText}
+          message={pasteMessage}
+          onChange={setPasteText}
+          onClose={() => setIsPasteModalOpen(false)}
+          onApply={applyPastedBudgetItems}
+        />
+      )}
+
+      {isAssetPasteModalOpen && (
+        <PasteModal
+          title="나의 예산 엑셀 붙여넣기"
+          guide="소유자  구분  자산명  금액  비고"
+          example={'신랑\t가용\t예금\t1000000\t메모'}
+          value={assetPasteText}
+          message={assetPasteMessage}
+          onChange={setAssetPasteText}
+          onClose={() => setIsAssetPasteModalOpen(false)}
+          onApply={applyPastedAssets}
+        />
+      )}
     </main>
   );
 }
@@ -2308,6 +3103,10 @@ function WeddingHallPage() {
   const [message, setMessage] = useState('');
   const [notice, setNotice] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [pasteMessage, setPasteMessage] = useState('');
+  const [excelDownload, setExcelDownload] = useExcelDownloadLink();
 
   const visibleRows = useMemo(() => rows.filter((row) => (
     (!filters.venueName || (row.venueName ?? '').includes(filters.venueName))
@@ -2379,6 +3178,121 @@ function WeddingHallPage() {
   function addRow() {
     setRows((current) => [{ ...weddingHallEmpty, id: `new-${Date.now()}`, sortOrder: current.length, isNew: true }, ...current]);
     setNotice('');
+  }
+
+  function applyPastedRows() {
+    const { lines, hasHeader, headerMap } = parsePastedTable(pasteText, [
+      '예식장', '지역', '상세주소', '가까운역', '셔틀유무', '단독건물여부', '웨딩홀', '홀분위기',
+      '대관료', '연출료', '최소인원', '최대인원', '식대', '식사종류', '웨딩형식', '시간',
+      '꽃금액', '주차', '주차비/시간', '최소금액', '최대금액', '비고'
+    ]);
+    if (lines.length === 0) {
+      setPasteMessage('붙여넣을 엑셀 데이터를 입력하세요.');
+      return;
+    }
+    const nextRows = [];
+    const errors = [];
+    lines.forEach((line, index) => {
+      const values = line.split('\t');
+      const rowNumber = index + 1 + (hasHeader ? 1 : 0);
+      const venueName = String(pastedValue(values, headerMap, ['예식장'], 0)).trim();
+      if (!venueName) {
+        errors.push(`${rowNumber}행: 예식장이 비어 있습니다.`);
+        return;
+      }
+      nextRows.push({
+        ...weddingHallEmpty,
+        id: makeNewId('new-wedding-hall'),
+        venueName,
+        region: String(pastedValue(values, headerMap, ['지역'], 1)).trim(),
+        address: String(pastedValue(values, headerMap, ['상세주소'], 2)).trim(),
+        nearestStation: String(pastedValue(values, headerMap, ['가까운역'], 3)).trim(),
+        shuttle: parseBoolean(pastedValue(values, headerMap, ['셔틀유무', '셔틀'], 4)),
+        standalone: parseBoolean(pastedValue(values, headerMap, ['단독건물여부', '단독건물'], 5)),
+        hallName: String(pastedValue(values, headerMap, ['웨딩홀'], 6)).trim(),
+        mood: String(pastedValue(values, headerMap, ['홀분위기'], 7)).trim() || '어두움',
+        rentalFee: parseAmount(pastedValue(values, headerMap, ['대관료'], 8)),
+        directingFee: parseAmount(pastedValue(values, headerMap, ['연출료'], 9)),
+        minPeople: parseAmount(pastedValue(values, headerMap, ['최소인원'], 10)),
+        maxPeople: parseAmount(pastedValue(values, headerMap, ['최대인원'], 11)),
+        mealFee: parseAmount(pastedValue(values, headerMap, ['식대'], 12)),
+        mealType: String(pastedValue(values, headerMap, ['식사종류'], 13)).trim(),
+        weddingStyle: String(pastedValue(values, headerMap, ['웨딩형식'], 14)).trim() || '분리',
+        ceremonyTime: String(pastedValue(values, headerMap, ['시간'], 15)).trim(),
+        flowerFee: parseAmount(pastedValue(values, headerMap, ['꽃금액'], 16)),
+        parking: String(pastedValue(values, headerMap, ['주차'], 17)).trim(),
+        parkingFee: String(pastedValue(values, headerMap, ['주차비/시간', '주차비'], 18)).trim(),
+        minAmount: parseAmount(pastedValue(values, headerMap, ['최소금액'], 19)),
+        maxAmount: parseAmount(pastedValue(values, headerMap, ['최대금액'], 20)),
+        note: String(pastedValue(values, headerMap, ['비고', '메모'], 21)).trim(),
+        sortOrder: rows.length + index,
+        isNew: true
+      });
+    });
+    if (errors.length > 0) {
+      setPasteMessage(errors.slice(0, 5).join('\n') + (errors.length > 5 ? `\n외 ${errors.length - 5}건` : ''));
+      return;
+    }
+    if (nextRows.length === 0) {
+      setPasteMessage('추가할 웨딩홀이 없습니다.');
+      return;
+    }
+    setRows((current) => [...nextRows, ...current]);
+    setNotice(`엑셀 붙여넣기로 신규 ${nextRows.length}건을 추가했습니다. 저장 버튼을 눌러 DB에 반영하세요.`);
+    setIsPasteModalOpen(false);
+    setPasteText('');
+    setPasteMessage('');
+  }
+
+  async function downloadWeddingHallExcel() {
+    if (visibleRows.length === 0) {
+      setNotice('다운로드할 웨딩홀 데이터가 없습니다.');
+      return;
+    }
+    setMessage('');
+    setNotice('엑셀 파일을 생성하고 있습니다.');
+    try {
+      const download = await createExcelDownload({
+        filenamePrefix: 'power_웨딩홀',
+        sheets: [{
+          name: '웨딩홀',
+          columns: [
+            { header: '예식장', key: 'venueName', width: 24 },
+            { header: '지역', key: 'region', width: 16 },
+            { header: '상세주소', key: 'address', width: 36 },
+            { header: '가까운역', key: 'nearestStation', width: 18 },
+            { header: '셔틀유무', key: 'shuttle', width: 12 },
+            { header: '단독건물여부', key: 'standalone', width: 14 },
+            { header: '웨딩홀', key: 'hallName', width: 22 },
+            { header: '홀분위기', key: 'mood', width: 12 },
+            { header: '대관료', key: 'rentalFee', width: 14, numFmt: '#,##0"원"' },
+            { header: '연출료', key: 'directingFee', width: 14, numFmt: '#,##0"원"' },
+            { header: '최소인원', key: 'minPeople', width: 12 },
+            { header: '최대인원', key: 'maxPeople', width: 12 },
+            { header: '식대', key: 'mealFee', width: 14, numFmt: '#,##0"원"' },
+            { header: '식사종류', key: 'mealType', width: 14 },
+            { header: '웨딩형식', key: 'weddingStyle', width: 12 },
+            { header: '시간', key: 'ceremonyTime', width: 12 },
+            { header: '꽃금액', key: 'flowerFee', width: 14, numFmt: '#,##0"원"' },
+            { header: '주차', key: 'parking', width: 14 },
+            { header: '주차비/시간', key: 'parkingFee', width: 16 },
+            { header: '최소금액', key: 'minAmount', width: 14, numFmt: '#,##0"원"' },
+            { header: '최대금액', key: 'maxAmount', width: 14, numFmt: '#,##0"원"' },
+            { header: '비고', key: 'note', width: 40 }
+          ],
+          rows: visibleRows.map((row) => ({
+            ...row,
+            shuttle: row.shuttle ? 'Y' : 'N',
+            standalone: row.standalone ? 'Y' : 'N'
+          }))
+        }]
+      });
+      setExcelDownload(download);
+      setNotice(`${visibleRows.length}건의 웨딩홀 엑셀 파일을 생성했습니다.`);
+    } catch (error) {
+      setNotice('');
+      setMessage(error.message || '엑셀 다운로드 중 오류가 발생했습니다.');
+    }
   }
 
   function startEditing(rowId, field) {
@@ -2552,12 +3466,14 @@ function WeddingHallPage() {
         <button className="filter-search" type="button" onClick={loadRows}>조회</button>
       </section>
       {message && <p className="message">{message}</p>}
-      {notice && <p className="saved-notice">{notice}</p>}
+      <DownloadNotice message={notice} download={excelDownload} />
       <section className="table-panel">
         <div className="table-toolbar">
           <span className={`pending-inline ${hasPendingChanges ? 'active' : ''}`}>{pendingText}</span>
           <div className="table-toolbar-actions">
             <button className="small-action" type="button" onClick={addRow}><Plus size={14} /> 행 추가</button>
+            <button className="small-action" type="button" onClick={() => { setPasteText(''); setPasteMessage(''); setIsPasteModalOpen(true); }}>엑셀 붙여넣기</button>
+            <button className="small-action" type="button" onClick={downloadWeddingHallExcel}>엑셀 다운로드</button>
             <button className="small-delete" type="button" onClick={deleteSelected}>삭제</button>
             <button className={`small-save ${hasPendingChanges ? 'has-pending' : ''}`} type="button" onClick={saveRows}>저장</button>
           </div>
@@ -2615,6 +3531,18 @@ function WeddingHallPage() {
           </table>
         </div>
       </section>
+      {isPasteModalOpen && (
+        <PasteModal
+          title="웨딩홀 엑셀 붙여넣기"
+          guide="예식장  지역  상세주소  가까운역  셔틀유무  단독건물여부  웨딩홀  홀분위기  대관료  연출료  최소인원  최대인원  식대  식사종류  웨딩형식  시간  꽃금액  주차  주차비/시간  최소금액  최대금액  비고"
+          example={'웨딩홀A\t서울\t상세주소\t강남역\tY\tN\t그랜드홀\t밝음\t1000000\t500000\t100\t200\t70000\t뷔페\t분리\t70분\t300000\t700대\t무료 2시간\t10000000\t15000000\t메모'}
+          value={pasteText}
+          message={pasteMessage}
+          onChange={setPasteText}
+          onClose={() => setIsPasteModalOpen(false)}
+          onApply={applyPastedRows}
+        />
+      )}
     </main>
   );
 }
@@ -2629,6 +3557,10 @@ function SdmPage() {
   const [message, setMessage] = useState('');
   const [notice, setNotice] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [pasteMessage, setPasteMessage] = useState('');
+  const [excelDownload, setExcelDownload] = useExcelDownloadLink();
   const visibleIds = rows.map((row) => row.id);
   const isAllSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
   const newCount = rows.filter((row) => row.isNew).length;
@@ -2655,6 +3587,67 @@ function SdmPage() {
   function addRow() {
     setRows((current) => [{ id: `new-${Date.now()}`, companyName: '', location: '', studioAmount: '', dressAmount: '', makeupAmount: '', memo: '', sortOrder: current.length, isNew: true }, ...current]);
     setNotice('');
+  }
+  function applyPastedRows() {
+    const { lines, hasHeader, headerMap } = parsePastedTable(pasteText, ['업체명', '위치', '스튜디오', '드레스', '메이크업', '메모']);
+    if (lines.length === 0) { setPasteMessage('붙여넣을 엑셀 데이터를 입력하세요.'); return; }
+    const nextRows = [];
+    const errors = [];
+    lines.forEach((line, index) => {
+      const values = line.split('\t');
+      const rowNumber = index + 1 + (hasHeader ? 1 : 0);
+      const companyName = String(pastedValue(values, headerMap, ['업체명'], 0)).trim();
+      if (!companyName) {
+        errors.push(`${rowNumber}행: 업체명이 비어 있습니다.`);
+        return;
+      }
+      nextRows.push({
+        id: makeNewId('new-sdm'),
+        companyName,
+        location: String(pastedValue(values, headerMap, ['위치'], 1)).trim(),
+        studioAmount: parseAmount(pastedValue(values, headerMap, ['스튜디오'], 2)),
+        dressAmount: parseAmount(pastedValue(values, headerMap, ['드레스'], 3)),
+        makeupAmount: parseAmount(pastedValue(values, headerMap, ['메이크업'], 4)),
+        memo: String(pastedValue(values, headerMap, ['메모', '비고'], 5)).trim(),
+        sortOrder: rows.length + index,
+        isNew: true
+      });
+    });
+    if (errors.length > 0) { setPasteMessage(errors.slice(0, 5).join('\n') + (errors.length > 5 ? `\n외 ${errors.length - 5}건` : '')); return; }
+    if (nextRows.length === 0) { setPasteMessage('추가할 스드메가 없습니다.'); return; }
+    setRows((current) => [...nextRows, ...current]);
+    setNotice(`엑셀 붙여넣기로 신규 ${nextRows.length}건을 추가했습니다. 저장 버튼을 눌러 DB에 반영하세요.`);
+    setIsPasteModalOpen(false); setPasteText(''); setPasteMessage('');
+  }
+  async function downloadSdmExcel() {
+    if (rows.length === 0) { setNotice('다운로드할 스드메 데이터가 없습니다.'); return; }
+    setMessage(''); setNotice('엑셀 파일을 생성하고 있습니다.');
+    try {
+      const download = await createExcelDownload({
+        filenamePrefix: 'power_스드메',
+        sheets: [{
+          name: '스드메',
+          columns: [
+            { header: '업체명', key: 'companyName', width: 22 },
+            { header: '위치', key: 'location', width: 28 },
+            { header: '스튜디오', key: 'studioAmount', width: 14, numFmt: '#,##0"원"' },
+            { header: '드레스', key: 'dressAmount', width: 14, numFmt: '#,##0"원"' },
+            { header: '메이크업', key: 'makeupAmount', width: 14, numFmt: '#,##0"원"' },
+            { header: '합계금액', key: 'totalAmount', width: 14, numFmt: '#,##0"원"' },
+            { header: '메모', key: 'memo', width: 40 }
+          ],
+          rows: rows.map((row) => ({
+            ...row,
+            studioAmount: Number(row.studioAmount || 0),
+            dressAmount: Number(row.dressAmount || 0),
+            makeupAmount: Number(row.makeupAmount || 0),
+            totalAmount: Number(row.studioAmount || 0) + Number(row.dressAmount || 0) + Number(row.makeupAmount || 0)
+          }))
+        }]
+      });
+      setExcelDownload(download);
+      setNotice(`${rows.length}건의 스드메 엑셀 파일을 생성했습니다.`);
+    } catch (error) { setNotice(''); setMessage(error.message || '엑셀 다운로드 중 오류가 발생했습니다.'); }
   }
   function reorder(targetRow) {
     if (!draggedId || draggedId === targetRow.id) {
@@ -2722,11 +3715,12 @@ function SdmPage() {
         <div><p className="eyebrow">Power 프로젝트</p><h1>스드메</h1><p className="summary">스튜디오, 드레스, 메이크업 업체 견적을 비교합니다.</p></div>
         <button className="icon-button" type="button" onClick={loadRows} disabled={isLoading} aria-label="새로고침"><RefreshCw size={18} /></button>
       </section>
-      {message && <p className="message">{message}</p>}{notice && <p className="saved-notice">{notice}</p>}
+      {message && <p className="message">{message}</p>}<DownloadNotice message={notice} download={excelDownload} />
       <section className="table-panel">
-        <div className="table-toolbar"><span className={`pending-inline ${hasPendingChanges ? 'active' : ''}`}>{pendingText}</span><div className="table-toolbar-actions"><button className="small-action" type="button" onClick={addRow}><Plus size={14} /> 행 추가</button><button className="small-delete" type="button" onClick={deleteSelected}>삭제</button><button className={`small-save ${hasPendingChanges ? 'has-pending' : ''}`} type="button" onClick={saveRows}>저장</button></div></div>
+        <div className="table-toolbar"><span className={`pending-inline ${hasPendingChanges ? 'active' : ''}`}>{pendingText}</span><div className="table-toolbar-actions"><button className="small-action" type="button" onClick={addRow}><Plus size={14} /> 행 추가</button><button className="small-action" type="button" onClick={() => { setPasteText(''); setPasteMessage(''); setIsPasteModalOpen(true); }}>엑셀 붙여넣기</button><button className="small-action" type="button" onClick={downloadSdmExcel}>엑셀 다운로드</button><button className="small-delete" type="button" onClick={deleteSelected}>삭제</button><button className={`small-save ${hasPendingChanges ? 'has-pending' : ''}`} type="button" onClick={saveRows}>저장</button></div></div>
         <div className="grid-table-wrap vendor-table-wrap"><table className="vendor-table sdm-table"><thead><tr><th>로우선택</th><th><PrettyCheckbox checked={isAllSelected} onChange={(checked) => setSelectedIds(checked ? visibleIds : [])} tone="danger" /></th><th>업체명</th><th>위치</th><th>스튜디오</th><th>드레스</th><th>메이크업</th><th>합계금액</th><th>메모</th></tr></thead><tbody>{rows.length === 0 && <tr><td className="empty-table" colSpan="9"><strong>표시할 스드메가 없습니다.</strong><span>행 추가로 업체를 입력하세요.</span></td></tr>}{rows.map((row) => <tr key={row.id} className={`${row.isNew ? 'new-row' : ''} ${draggedId && dragOverId === row.id && draggedId !== row.id ? 'drag-over-row' : ''}`} onDragOver={(event) => { event.preventDefault(); setDragOverId(row.id); }} onDragLeave={() => setDragOverId((current) => current === row.id ? null : current)} onDrop={() => reorder(row)}><td className="drag-column" draggable onDragStart={() => { setDraggedId(row.id); setDragOverId(null); }} onDragEnd={() => { setDraggedId(null); setDragOverId(null); }}><GripVertical size={16} /></td><td className="check-column"><PrettyCheckbox checked={selectedIds.includes(row.id)} onChange={(checked) => setSelectedIds((current) => checked ? [...current, row.id] : current.filter((id) => id !== row.id))} tone="danger" /></td><td>{cell(row, 'companyName')}</td><td>{cell(row, 'location')}</td><td>{cell(row, 'studioAmount', 'money')}</td><td>{cell(row, 'dressAmount', 'money')}</td><td>{cell(row, 'makeupAmount', 'money')}</td><td className="readonly-metric">{currency(Number(row.studioAmount || 0) + Number(row.dressAmount || 0) + Number(row.makeupAmount || 0))}</td><td>{row.isNew || (editingCell?.rowId === row.id && editingCell?.field === 'memo') ? <textarea value={row.memo ?? ''} onBlur={() => setEditingCell(null)} onChange={(event) => updateRow(row.id, 'memo', event.target.value)} /> : <span className="read-text memo-text multi-line" onDoubleClick={() => setEditingCell({ rowId: row.id, field: 'memo' })}>{row.memo || '-'}</span>}</td></tr>)}</tbody></table></div>
       </section>
+      {isPasteModalOpen && <PasteModal title="스드메 엑셀 붙여넣기" guide="업체명  위치  스튜디오  드레스  메이크업  메모" example={'업체A\t서울\t1000000\t2000000\t500000\t메모'} value={pasteText} message={pasteMessage} onChange={setPasteText} onClose={() => setIsPasteModalOpen(false)} onApply={applyPastedRows} />}
     </main>
   );
 }
@@ -2741,6 +3735,10 @@ function HomePage() {
   const [message, setMessage] = useState('');
   const [notice, setNotice] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [pasteMessage, setPasteMessage] = useState('');
+  const [excelDownload, setExcelDownload] = useExcelDownloadLink();
   const visibleIds = rows.map((row) => row.id);
   const isAllSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
   const newCount = rows.filter((row) => row.isNew).length;
@@ -2793,6 +3791,72 @@ function HomePage() {
       isNew: true
     }, ...current]);
     setNotice('');
+  }
+
+  function applyPastedRows() {
+    const { lines, hasHeader, headerMap } = parsePastedTable(pasteText, ['아파트명', '위치', '공급면적', '평수', '호갱노노금액', '네이버금액', '주차공간', '해방향', '메모']);
+    if (lines.length === 0) { setPasteMessage('붙여넣을 엑셀 데이터를 입력하세요.'); return; }
+    const nextRows = [];
+    const errors = [];
+    lines.forEach((line, index) => {
+      const values = line.split('\t');
+      const rowNumber = index + 1 + (hasHeader ? 1 : 0);
+      const apartmentName = String(pastedValue(values, headerMap, ['아파트명'], 0)).trim();
+      if (!apartmentName) {
+        errors.push(`${rowNumber}행: 아파트명이 비어 있습니다.`);
+        return;
+      }
+      nextRows.push({
+        id: makeNewId('new-home'),
+        apartmentName,
+        location: String(pastedValue(values, headerMap, ['위치'], 1)).trim(),
+        supplyArea: String(pastedValue(values, headerMap, ['공급면적'], 2)).trim(),
+        pyeong: String(pastedValue(values, headerMap, ['평수'], 3)).trim(),
+        hogangnonoAmount: parseAmount(pastedValue(values, headerMap, ['호갱노노금액', '호갱노노 금액'], 4)),
+        naverAmount: parseAmount(pastedValue(values, headerMap, ['네이버금액', '네이버 금액'], 5)),
+        parkingStatus: String(pastedValue(values, headerMap, ['주차공간'], 6)).trim(),
+        sunDirection: String(pastedValue(values, headerMap, ['해방향'], 7)).trim(),
+        memo: String(pastedValue(values, headerMap, ['메모', '비고'], 8)).trim(),
+        sortOrder: rows.length + index,
+        isNew: true
+      });
+    });
+    if (errors.length > 0) { setPasteMessage(errors.slice(0, 5).join('\n') + (errors.length > 5 ? `\n외 ${errors.length - 5}건` : '')); return; }
+    if (nextRows.length === 0) { setPasteMessage('추가할 보금자리가 없습니다.'); return; }
+    setRows((current) => [...nextRows, ...current]);
+    setNotice(`엑셀 붙여넣기로 신규 ${nextRows.length}건을 추가했습니다. 저장 버튼을 눌러 DB에 반영하세요.`);
+    setIsPasteModalOpen(false); setPasteText(''); setPasteMessage('');
+  }
+
+  async function downloadHomeExcel() {
+    if (rows.length === 0) { setNotice('다운로드할 보금자리 데이터가 없습니다.'); return; }
+    setMessage(''); setNotice('엑셀 파일을 생성하고 있습니다.');
+    try {
+      const download = await createExcelDownload({
+        filenamePrefix: 'power_보금자리',
+        sheets: [{
+          name: '보금자리',
+          columns: [
+            { header: '아파트명', key: 'apartmentName', width: 24 },
+            { header: '위치', key: 'location', width: 28 },
+            { header: '공급면적', key: 'supplyArea', width: 14 },
+            { header: '평수', key: 'pyeong', width: 12 },
+            { header: '호갱노노 금액', key: 'hogangnonoAmount', width: 16, numFmt: '#,##0"원"' },
+            { header: '네이버 금액', key: 'naverAmount', width: 16, numFmt: '#,##0"원"' },
+            { header: '주차공간', key: 'parkingStatus', width: 12 },
+            { header: '해방향', key: 'sunDirection', width: 14 },
+            { header: '메모', key: 'memo', width: 40 }
+          ],
+          rows: rows.map((row) => ({
+            ...row,
+            hogangnonoAmount: Number(row.hogangnonoAmount || 0),
+            naverAmount: Number(row.naverAmount || 0)
+          }))
+        }]
+      });
+      setExcelDownload(download);
+      setNotice(`${rows.length}건의 보금자리 엑셀 파일을 생성했습니다.`);
+    } catch (error) { setNotice(''); setMessage(error.message || '엑셀 다운로드 중 오류가 발생했습니다.'); }
   }
 
   function reorder(targetRow) {
@@ -2903,12 +3967,14 @@ function HomePage() {
         <button className="icon-button" type="button" onClick={loadRows} disabled={isLoading} aria-label="새로고침"><RefreshCw size={18} /></button>
       </section>
       {message && <p className="message">{message}</p>}
-      {notice && <p className="saved-notice">{notice}</p>}
+      <DownloadNotice message={notice} download={excelDownload} />
       <section className="table-panel">
         <div className="table-toolbar">
           <span className={`pending-inline ${hasPendingChanges ? 'active' : ''}`}>{pendingText}</span>
           <div className="table-toolbar-actions">
             <button className="small-action" type="button" onClick={addRow}><Plus size={14} /> 행 추가</button>
+            <button className="small-action" type="button" onClick={() => { setPasteText(''); setPasteMessage(''); setIsPasteModalOpen(true); }}>엑셀 붙여넣기</button>
+            <button className="small-action" type="button" onClick={downloadHomeExcel}>엑셀 다운로드</button>
             <button className="small-delete" type="button" onClick={deleteSelected}>삭제</button>
             <button className={`small-save ${hasPendingChanges ? 'has-pending' : ''}`} type="button" onClick={saveRows}>저장</button>
           </div>
@@ -2983,6 +4049,7 @@ function HomePage() {
           </table>
         </div>
       </section>
+      {isPasteModalOpen && <PasteModal title="보금자리 엑셀 붙여넣기" guide="아파트명  위치  공급면적  평수  호갱노노 금액  네이버 금액  주차공간  해방향  메모" example={'아파트A\t서울\t84㎡\t34평\t1000000000\t990000000\t여유\t남동향\t메모'} value={pasteText} message={pasteMessage} onChange={setPasteText} onClose={() => setIsPasteModalOpen(false)} onApply={applyPastedRows} />}
     </main>
   );
 }

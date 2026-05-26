@@ -1099,6 +1099,23 @@ select {
   font-weight: 700;
 }
 
+.download-link {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 10px;
+  padding: 5px 10px;
+  border: 1px solid #1d6f62;
+  border-radius: 6px;
+  color: #1d6f62;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.download-link:hover {
+  background: #e8f4ef;
+}
+
 .small-save.has-pending {
   box-shadow: 0 0 0 3px rgba(29, 111, 98, 0.16);
 }
@@ -1270,6 +1287,38 @@ select {
 
 .asset-table {
   min-width: 900px;
+}
+
+.paste-modal code {
+  display: block;
+  border: 1px solid #d7dfda;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f5f8f7;
+  color: #1d6f62;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: pre-wrap;
+}
+
+.paste-textarea {
+  width: 100%;
+  min-height: 220px;
+  border: 1px solid #cbd7d1;
+  border-radius: 8px;
+  padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.paste-message {
+  white-space: pre-line;
+}
+
+.paste-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .asset-table th:nth-child(1) {
@@ -1875,6 +1924,15 @@ select {
 .dark-mode .status-chip.safe {
   background: #123b34;
   color: #8ce5d0;
+}
+
+.dark-mode .download-link {
+  border-color: #67d2b8;
+  color: #8ce5d0;
+}
+
+.dark-mode .download-link:hover {
+  background: #173d36;
 }
 
 .dark-mode .message,
